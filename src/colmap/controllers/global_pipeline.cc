@@ -80,6 +80,9 @@ GlobalPipeline::GlobalPipeline(
   database_cache_options.ignore_watermarks = options_.ignore_watermarks;
   database_cache_options.image_names = {options_.image_names.begin(),
                                         options_.image_names.end()};
+  // Mirror incremental_pipeline.cc: convert priors to ENU when using positions.
+  database_cache_options.convert_pose_priors_to_enu =
+      options_.mapper.use_prior_position;
   database_cache_ = DatabaseCache::Create(*database, database_cache_options);
   if (options_.decompose_relative_pose) {
     MaybeDecomposeRelativePoses(database_cache_.get());

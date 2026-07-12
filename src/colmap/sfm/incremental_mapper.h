@@ -150,6 +150,23 @@ class IncrementalMapper {
     // (chi2 for 3DOF at 95% = 7.815)
     double prior_position_loss_scale = 7.815;
 
+    // Whether to use rotation priors in the pose-prior bundle adjuster (F5).
+    bool use_prior_rotation = false;
+
+    // Fallback rotational sigma (degrees) when no prior rotation covariance is
+    // provided to the pose-prior BA.
+    double prior_rotation_fallback_stddev_deg = 5.0;
+
+    // Whether to gate and/or seed image registration with pose priors (F4).
+    // Both mechanisms fire only after the reconstruction has been aligned to
+    // the metric prior world via a successful pose-prior global BA.
+    bool use_prior_pose_for_registration = false;
+
+    // Gate threshold (meters). If > 0 and use_prior_pose_for_registration is
+    // true, reject a RANSAC pose whose camera center is farther than
+    // max(reg_prior_max_position_error, 3*sqrt(trace(cov)/3)) from the prior.
+    double reg_prior_max_position_error = 0.0;
+
     // Number of threads.
     int num_threads = -1;
 
@@ -375,6 +392,11 @@ class IncrementalMapper {
 
   // Statistics
   RegistrationStatistics reg_stats_;
+
+  // Set to true after the first successful pose-prior global BA, indicating the
+  // reconstruction is in the metric prior (ENU) world.  Reset on
+  // BeginReconstruction.  Both F4 mechanisms (gate and seed) require this flag.
+  bool reconstruction_aligned_to_priors_ = false;
 
   // Frames that have been filtered in current reconstruction.
   FlatHashSet<frame_t> filtered_frames_;

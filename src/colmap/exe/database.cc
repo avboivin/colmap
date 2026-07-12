@@ -31,6 +31,7 @@
 
 #include "colmap/controllers/option_manager.h"
 #include "colmap/scene/database.h"
+#include "colmap/scene/pose_prior_io.h"
 #include "colmap/scene/reconstruction.h"
 #include "colmap/scene/rig.h"
 #include "colmap/util/file.h"
@@ -164,6 +165,52 @@ int RunRigConfigurator(int argc, char** argv) {
     reconstruction->Write(output_path);
   }
 
+  return EXIT_SUCCESS;
+}
+
+int RunPosePriorImporter(int argc, char** argv) {
+  std::filesystem::path database_path;
+  std::filesystem::path import_path;
+  bool clear_existing = false;
+  bool dry_run = false;
+
+  OptionManager options;
+  options.AddRequiredOption("database_path", &database_path);
+  options.AddRequiredOption(
+      "import_path",
+      &import_path,
+      "CSV file with pose priors (see docs for column format).");
+  options.AddDefaultOption("clear_existing",
+                           &clear_existing,
+                           "If true, clear the pose_priors table before import.");
+  options.AddDefaultOption(
+      "dry_run", &dry_run, "Parse and validate only; do not write to the database.");
+  if (!options.Parse(argc, argv)) {
+    return EXIT_FAILURE;
+  }
+
+  auto database = Database::Open(database_path);
+  PosePriorImportStats stats;
+  std::string error_message;
+  if (!ImportPosePriorsFromCsv(database.get(),
+                               import_path,
+                               clear_existing,
+                               dry_run,
+                               &stats,
+                               &error_message)) {
+    LOG(ERROR) << error_message;
+    return EXIT_FAILURE;
+  }
+
+  LOG(INFO) << "Pose prior import"
+            << (dry_run ? " (dry run)" : "") << ": parsed=" << stats.rows_parsed
+            << " matched=" << stats.matched
+            << " position=" << stats.with_position
+            << " gravity=" << stats.with_gravity
+            << " rotation=" << stats.with_rotation
+            << " unknown=" << stats.skipped_unknown
+            << " rejected=" << stats.rejected_invalid
+            << " inserted=" << stats.inserted << " updated=" << stats.updated;
   return EXIT_SUCCESS;
 }
 

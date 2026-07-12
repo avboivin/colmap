@@ -32,6 +32,8 @@
 #include "colmap/math/math.h"
 #include "colmap/util/logging.h"
 
+#include <Eigen/Geometry>
+
 namespace colmap {
 namespace {
 
@@ -60,7 +62,9 @@ bool PosePrior::operator==(const PosePrior& other) const {
          coordinate_system == other.coordinate_system &&
          IsNaNEqual(position, other.position) &&
          IsNaNEqual(position_covariance, other.position_covariance) &&
-         IsNaNEqual(gravity, other.gravity);
+         IsNaNEqual(gravity, other.gravity) &&
+         IsNaNEqual(rotation.coeffs(), other.rotation.coeffs()) &&
+         IsNaNEqual(rotation_covariance, other.rotation_covariance);
 }
 
 bool PosePrior::operator!=(const PosePrior& other) const {
@@ -77,7 +81,10 @@ std::ostream& operator<<(std::ostream& stream, const PosePrior& prior) {
          << "], position_covariance=["
          << prior.position_covariance.format(kVecFmt) << "], coordinate_system="
          << PosePrior::CoordinateSystemToString(prior.coordinate_system)
-         << ", gravity=[" << prior.gravity.format(kVecFmt) << "])";
+         << ", gravity=[" << prior.gravity.format(kVecFmt) << "], rotation=["
+         << prior.rotation.coeffs().format(kVecFmt)
+         << "], rotation_covariance=["
+         << prior.rotation_covariance.format(kVecFmt) << "])";
   return stream;
 }
 
@@ -113,6 +120,23 @@ int ComputeRot90FromGravity(const Eigen::Vector3d& gravity) {
     rot90_ccw += 4;
   }
   return rot90_ccw;
+}
+
+Eigen::Quaterniond RotationPriorFromGravityAndHeading(
+    const Eigen::Vector3d& gravity_in_cam, double heading_rad) {
+  THROW_CHECK_GT(gravity_in_cam.squaredNorm(), 0.0)
+      << "Gravity vector must be non-zero";
+  const Eigen::Vector3d g = gravity_in_cam.normalized();
+  const Eigen::Vector3d enu_down(0, 0, -1);
+  const Eigen::Quaterniond q_tilt =
+      Eigen::Quaterniond::FromTwoVectors(enu_down, g);
+
+  // Camera +Z expressed in ENU; compass bearing is atan2(East, North).
+  const Eigen::Vector3d z_in_enu = q_tilt.toRotationMatrix().transpose().col(2);
+  const double current_bearing = std::atan2(z_in_enu.x(), z_in_enu.y());
+  const Eigen::AngleAxisd yaw(heading_rad - current_bearing,
+                              Eigen::Vector3d::UnitZ());
+  return Eigen::Quaterniond(q_tilt.toRotationMatrix() * yaw.toRotationMatrix());
 }
 
 }  // namespace colmap

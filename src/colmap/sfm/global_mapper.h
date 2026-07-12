@@ -1,8 +1,10 @@
 #pragma once
 
+#include "colmap/estimators/bundle_adjustment.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 #include "colmap/estimators/global_positioning.h"
 #include "colmap/estimators/rotation_averaging.h"
+#include "colmap/geometry/pose_prior.h"
 #include "colmap/scene/database_cache.h"
 #include "colmap/scene/pose_graph.h"
 #include "colmap/scene/reconstruction.h"
@@ -11,6 +13,7 @@
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <vector>
 
 namespace colmap {
 
@@ -103,10 +106,32 @@ struct GlobalMapperOptions {
   bool skip_bundle_adjustment = false;
   bool skip_retriangulation = false;
 
+  // Whether to use prior positions from the database to set metric scale and
+  // anchor the global bundle adjustment (mirrors IncrementalMapper behaviour).
+  bool use_prior_position = false;
+
+  // Whether to apply a robust (Cauchy) loss on prior position residuals.
+  bool use_robust_loss_on_prior_position = false;
+
+  // Residual threshold for the robust loss (chi2 for 3-DOF at 95% = 7.815).
+  double prior_position_loss_scale = 7.815;
+
+  // Fallback positional sigma (m) when no per-prior covariance is stored.
+  double prior_position_fallback_stddev = 1.0;
+
+  // Whether to include rotation-prior residuals in the pose-prior BA (F5).
+  bool use_prior_rotation = false;
+
+  // Fallback rotational sigma (deg) when no per-prior covariance is stored.
+  double prior_rotation_fallback_stddev_deg = 5.0;
+
   RotationEstimatorOptions RotationAveraging() const;
   GlobalPositionerOptions GlobalPositioning() const;
   BundleAdjustmentOptions BundleAdjustment() const;
   IncrementalTriangulator::Options Retriangulation() const;
+
+  // Build PosePriorBundleAdjustmentOptions from the prior-related fields above.
+  PosePriorBundleAdjustmentOptions PriorBundleAdjustment() const;
 };
 
 class GlobalMapper {
@@ -135,25 +160,33 @@ class GlobalMapper {
   bool GlobalPositioning(const GlobalPositionerOptions& options,
                          double max_angular_reproj_error_deg,
                          double max_normalized_reproj_error,
-                         double min_tri_angle_deg);
+                         double min_tri_angle_deg,
+                         bool use_prior_position = false);
 
   // Run iterative bundle adjustment to refine poses and structure. The optional
   // `on_progress` callback is invoked after each iteration and returns true if
   // a stop has been requested, in which case the iteration terminates early.
-  bool IterativeBundleAdjustment(const BundleAdjustmentOptions& options,
-                                 double max_normalized_reproj_error,
-                                 double min_tri_angle_deg,
-                                 int num_iterations,
-                                 bool skip_fixed_rotation_stage = false,
-                                 bool skip_joint_optimization_stage = false,
-                                 const std::function<bool()>& on_progress = {});
+  // When use_prior_position is true and enough priors are registered, the
+  // bundle adjuster is replaced with a pose-prior BA (prior_options is used).
+  bool IterativeBundleAdjustment(
+      const BundleAdjustmentOptions& options,
+      double max_normalized_reproj_error,
+      double min_tri_angle_deg,
+      int num_iterations,
+      bool skip_fixed_rotation_stage = false,
+      bool skip_joint_optimization_stage = false,
+      const std::function<bool()>& on_progress = {},
+      bool use_prior_position = false,
+      const PosePriorBundleAdjustmentOptions& prior_options = {});
 
   // Iteratively retriangulate tracks and refine to improve structure.
   bool IterativeRetriangulateAndRefine(
       const IncrementalTriangulator::Options& options,
       const BundleAdjustmentOptions& ba_options,
       double max_normalized_reproj_error,
-      double min_tri_angle_deg);
+      double min_tri_angle_deg,
+      bool use_prior_position = false,
+      const PosePriorBundleAdjustmentOptions& prior_options = {});
 
   // Getter functions.
   std::shared_ptr<class Reconstruction> Reconstruction() const;

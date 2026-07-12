@@ -34,6 +34,7 @@
 #include "colmap/estimators/cost_functions/pose_prior.h"
 #include "colmap/estimators/cost_functions/reprojection_error.h"
 #include "colmap/estimators/cost_functions/utils.h"
+#include "colmap/math/math.h"
 #include "colmap/util/cuda.h"
 #include "colmap/util/hash_containers.h"
 #include "colmap/util/misc.h"
@@ -900,18 +901,26 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
         reconstruction_(reconstruction) {
     THROW_CHECK(prior_options_.Check());
 
-    // Filter irrelevant pose priors.
+    // Filter irrelevant pose priors.  Keep a prior when it has position OR
+    // (use_prior_rotation is set AND it has rotation).  AlignReconstruction
+    // uses only position priors, so rotation-only priors don't disrupt it.
     pose_priors_.erase(
-        std::remove_if(pose_priors_.begin(),
-                       pose_priors_.end(),
-                       [this](const auto& pose_prior) {
-                         return !pose_prior.HasPosition() ||
-                                pose_prior.corr_data_id.sensor_id.type !=
-                                    SensorType::CAMERA ||
-                                !config_.HasImage(pose_prior.corr_data_id.id);
-                       }),
+        std::remove_if(
+            pose_priors_.begin(),
+            pose_priors_.end(),
+            [this](const auto& pose_prior) {
+              if (pose_prior.corr_data_id.sensor_id.type != SensorType::CAMERA)
+                return true;
+              if (!config_.HasImage(pose_prior.corr_data_id.id)) return true;
+              const bool has_useful_position = pose_prior.HasPosition();
+              const bool has_useful_rotation =
+                  prior_options_.use_prior_rotation &&
+                  pose_prior.HasRotation();
+              return !has_useful_position && !has_useful_rotation;
+            }),
         pose_priors_.end());
 
+    // AlignReconstruction uses only position priors internally.
     const bool use_prior_position = AlignReconstruction();
 
     // Fix 7-DOFs of BA problem if not enough valid pose priors.
@@ -928,7 +937,7 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
     default_bundle_adjuster_ = std::make_unique<DefaultBundleAdjuster>(
         options_, config_, reconstruction);
 
-    if (use_prior_position) {
+    if (use_prior_position || prior_options_.use_prior_rotation) {
       prior_loss_function_ = CreateLossFunction(
           prior_options_.ceres->prior_position_loss_function_type,
           prior_options_.ceres->prior_position_loss_scale);
@@ -991,36 +1000,68 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
 
     Rigid3d& rig_from_world = frame.RigFromWorld();
 
-    const Eigen::Vector3d normalized_position =
-        normalized_from_metric_ * pose_prior.position;
-    const Eigen::Matrix3d normalized_from_metric_scaled_rotation =
-        normalized_from_metric_.scale() *
-        normalized_from_metric_.rotation().toRotationMatrix();
-    const Eigen::Matrix3d position_cov =
-        pose_prior.HasPositionCov()
-            ? pose_prior.position_covariance
-            : (prior_options_.prior_position_fallback_stddev *
-               prior_options_.prior_position_fallback_stddev *
-               Eigen::Matrix3d::Identity());
-    const Eigen::Matrix3d normalized_position_cov =
-        normalized_from_metric_scaled_rotation * position_cov *
-        normalized_from_metric_scaled_rotation.transpose();
+    // ---------- Position residual ----------
+    if (pose_prior.HasPosition()) {
+      const Eigen::Vector3d normalized_position =
+          normalized_from_metric_ * pose_prior.position;
+      const Eigen::Matrix3d normalized_from_metric_scaled_rotation =
+          normalized_from_metric_.scale() *
+          normalized_from_metric_.rotation().toRotationMatrix();
+      const Eigen::Matrix3d position_cov =
+          pose_prior.HasPositionCov()
+              ? pose_prior.position_covariance
+              : (prior_options_.prior_position_fallback_stddev *
+                 prior_options_.prior_position_fallback_stddev *
+                 Eigen::Matrix3d::Identity());
+      const Eigen::Matrix3d normalized_position_cov =
+          normalized_from_metric_scaled_rotation * position_cov *
+          normalized_from_metric_scaled_rotation.transpose();
 
-    if (image.IsRefInFrame()) {
+      if (image.IsRefInFrame()) {
+        problem.AddResidualBlock(
+            CovarianceWeightedCostFunctor<AbsolutePosePositionPriorCostFunctor>::
+                Create(normalized_position_cov, normalized_position),
+            prior_loss_function_.get(),
+            rig_from_world.params.data());
+      } else {
+        Rigid3d& cam_from_rig =
+            frame.RigPtr()->SensorFromRig(image.CameraPtr()->SensorId());
+        problem.AddResidualBlock(
+            CovarianceWeightedCostFunctor<
+                AbsoluteRigPosePositionPriorCostFunctor>::
+                Create(normalized_position_cov, normalized_position),
+            prior_loss_function_.get(),
+            cam_from_rig.params.data(),
+            rig_from_world.params.data());
+      }
+    }
+
+    // ---------- Rotation residual (F5) ----------
+    // V1: restrict to ref-in-frame images; non-ref would require composing
+    // sensor_from_rig into the prior which is a follow-up.
+    if (prior_options_.use_prior_rotation && pose_prior.HasRotation() &&
+        image.IsRefInFrame()) {
+      // AlignReconstruction() has already rotated the reconstruction into
+      // the prior/ENU world, and Normalize applies identity rotation
+      // (reconstruction.cc:723), so the prior rotation is used untransformed.
+      const Eigen::Matrix3d R_prior =
+          pose_prior.rotation.toRotationMatrix();
+
+      // Convert covariance from world (ENU) axes to sensor frame:
+      //   cov_sensor = R_prior * cov_world * R_prior^T  (§1.3).
+      const double fallback_var =
+          DegToRad(prior_options_.prior_rotation_fallback_stddev_deg);
+      const Eigen::Matrix3d rot_cov_world =
+          pose_prior.HasRotationCov()
+              ? pose_prior.rotation_covariance
+              : (fallback_var * fallback_var * Eigen::Matrix3d::Identity());
+      const Eigen::Matrix3d rot_cov_sensor =
+          R_prior * rot_cov_world * R_prior.transpose();
+
       problem.AddResidualBlock(
-          CovarianceWeightedCostFunctor<AbsolutePosePositionPriorCostFunctor>::
-              Create(normalized_position_cov, normalized_position),
+          CovarianceWeightedCostFunctor<AbsoluteRotationPriorCostFunctor>::
+              Create(rot_cov_sensor, pose_prior.rotation),
           prior_loss_function_.get(),
-          rig_from_world.params.data());
-    } else {
-      Rigid3d& cam_from_rig =
-          frame.RigPtr()->SensorFromRig(image.CameraPtr()->SensorId());
-      problem.AddResidualBlock(
-          CovarianceWeightedCostFunctor<
-              AbsoluteRigPosePositionPriorCostFunctor>::
-              Create(normalized_position_cov, normalized_position),
-          prior_loss_function_.get(),
-          cam_from_rig.params.data(),
           rig_from_world.params.data());
     }
   }

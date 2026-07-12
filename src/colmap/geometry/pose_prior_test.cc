@@ -29,6 +29,8 @@
 
 #include "colmap/geometry/pose_prior.h"
 
+#include "colmap/math/math.h"
+
 #include <gtest/gtest.h>
 
 namespace colmap {
@@ -76,13 +78,17 @@ TEST(PosePrior, Print) {
   prior.position_covariance = Eigen::Matrix3d::Identity();
   prior.coordinate_system = PosePrior::CoordinateSystem::CARTESIAN;
   prior.gravity = Eigen::Vector3d::UnitZ();
+  prior.rotation = Eigen::Quaterniond::Identity();
+  prior.rotation_covariance = Eigen::Matrix3d::Identity();
   std::ostringstream stream;
   stream << prior;
   EXPECT_EQ(stream.str(),
             "PosePrior(pose_prior_id=0, corr_data_id=(CAMERA, 1, 2), "
             "position=[0, 0, 0], "
             "position_covariance=[1, 0, 0, 0, 1, 0, 0, 0, 1], "
-            "coordinate_system=CARTESIAN, gravity=[0, 0, 1])");
+            "coordinate_system=CARTESIAN, gravity=[0, 0, 1], "
+            "rotation=[0, 0, 0, 1], "
+            "rotation_covariance=[1, 0, 0, 0, 1, 0, 0, 0, 1])");
 }
 
 TEST(PosePrior, GravityFromExifOrientation) {
@@ -120,6 +126,55 @@ TEST(PosePrior, ComputeRot90FromGravity) {
   EXPECT_EQ(ComputeRot90FromGravity(gravity), 0);
   gravity = Eigen::Vector3d(0.99, -0.01, 0.1);
   EXPECT_EQ(ComputeRot90FromGravity(gravity), 3);
+}
+
+TEST(PosePrior, RotationPriorFromGravityAndHeading) {
+  constexpr double kTol = 1e-6;
+  const Eigen::Vector3d gravity_level(0, 1, 0);
+
+  // Level camera facing North.
+  {
+    const Eigen::Quaterniond q =
+        RotationPriorFromGravityAndHeading(gravity_level, /*heading_rad=*/0);
+    const Eigen::Matrix3d R = q.normalized().toRotationMatrix();
+    EXPECT_NEAR((R * Eigen::Vector3d(0, 0, -1) - gravity_level).norm(),
+                0,
+                kTol);
+    const Eigen::Vector3d z_in_enu = R.transpose().col(2);
+    EXPECT_NEAR(std::atan2(z_in_enu.x(), z_in_enu.y()), 0, kTol);
+    EXPECT_NEAR(z_in_enu.z(), 0, kTol);
+  }
+
+  // Level camera facing East.
+  {
+    const Eigen::Quaterniond q = RotationPriorFromGravityAndHeading(
+        gravity_level, /*heading_rad=*/M_PI / 2);
+    const Eigen::Matrix3d R = q.normalized().toRotationMatrix();
+    EXPECT_NEAR((R * Eigen::Vector3d(0, 0, -1) - gravity_level).norm(),
+                0,
+                kTol);
+    const Eigen::Vector3d z_in_enu = R.transpose().col(2);
+    EXPECT_NEAR(std::atan2(z_in_enu.x(), z_in_enu.y()), M_PI / 2, kTol);
+  }
+
+  // Level camera facing West, pitched down 30 deg.
+  {
+    const double pitch = DegToRad(30.0);
+    // Pitch down about camera X after level-north: rotate gravity and heading.
+    // Gravity for 30 deg pitch-down about right axis: R_x(pitch) * (0,1,0).
+    const Eigen::Vector3d gravity_pitched(0, std::cos(pitch), std::sin(pitch));
+    const Eigen::Quaterniond q = RotationPriorFromGravityAndHeading(
+        gravity_pitched, /*heading_rad=*/M_PI);  // West
+    const Eigen::Matrix3d R = q.normalized().toRotationMatrix();
+    EXPECT_NEAR((R * Eigen::Vector3d(0, 0, -1) - gravity_pitched.normalized())
+                    .norm(),
+                0,
+                kTol);
+    const Eigen::Vector3d z_in_enu = R.transpose().col(2);
+    const Eigen::Vector3d z_horiz(z_in_enu.x(), z_in_enu.y(), 0);
+    EXPECT_GT(z_horiz.norm(), 1e-6);
+    EXPECT_NEAR(std::atan2(z_horiz.x(), z_horiz.y()), M_PI, kTol);
+  }
 }
 
 }  // namespace

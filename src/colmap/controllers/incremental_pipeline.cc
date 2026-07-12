@@ -143,6 +143,10 @@ IncrementalMapper::Options IncrementalPipelineOptions::Mapper() const {
   options.use_prior_position = use_prior_position;
   options.use_robust_loss_on_prior_position = use_robust_loss_on_prior_position;
   options.prior_position_loss_scale = prior_position_loss_scale;
+  options.use_prior_rotation = use_prior_rotation;
+  options.prior_rotation_fallback_stddev_deg = prior_rotation_fallback_stddev_deg;
+  options.use_prior_pose_for_registration = use_prior_pose_for_registration;
+  options.reg_prior_max_position_error = reg_prior_max_position_error;
   options.random_seed = random_seed;
   return options;
 }
@@ -254,6 +258,7 @@ bool IncrementalPipelineOptions::Check() const {
   CHECK_OPTION_GE(ba_global_max_refinement_change, 0);
   CHECK_OPTION_GE(snapshot_frames_freq, 0);
   CHECK_OPTION_GT(prior_position_loss_scale, 0.);
+  CHECK_OPTION_GT(prior_rotation_fallback_stddev_deg, 0.);
   CHECK_OPTION_GE(num_threads, -1);
   CHECK_OPTION_GE(random_seed, -1);
 #ifndef CASPAR_ENABLED

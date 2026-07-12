@@ -65,6 +65,7 @@ COLMAP_ADD_LIBRARY(
         reconstruction_manager.h reconstruction_manager.cc
         reconstruction_pruning.h reconstruction_pruning.cc
         rig.h rig.cc
+        pose_prior_io.h pose_prior_io.cc
         scene_clustering.h scene_clustering.cc
         synthetic.h synthetic.cc
         track.h track.cc
@@ -104,6 +105,11 @@ COLMAP_ADD_TEST(
 COLMAP_ADD_TEST(
     NAME database_test
     SRCS database_test.cc
+    LINK_LIBS colmap_scene
+)
+COLMAP_ADD_TEST(
+    NAME pose_prior_io_test
+    SRCS pose_prior_io_test.cc
     LINK_LIBS colmap_scene
 )
 if(TESTS_ENABLED)

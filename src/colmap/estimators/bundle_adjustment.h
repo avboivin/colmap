@@ -254,6 +254,14 @@ struct PosePriorBundleAdjustmentOptions
   // Fallback if no prior position covariance is provided.
   double prior_position_fallback_stddev = 1.0;
 
+  // Whether to add rotation-prior residuals in addition to position residuals.
+  // V1 restriction: only ref-in-frame images get rotation residuals.
+  bool use_prior_rotation = false;
+
+  // Fallback rotational sigma (degrees) when no prior rotation covariance is
+  // provided. Converted to radians internally.
+  double prior_rotation_fallback_stddev_deg = 5.0;
+
   // Sim3 alignment options.
   RANSACOptions alignment_ransac_options;
 

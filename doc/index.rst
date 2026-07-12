@@ -122,6 +122,7 @@ support (special credits to `Torsten Sattler <https://tsattler.github.io>`_).
    concepts
    features
    database
+   pose_priors
    cameras
    rigs
    format

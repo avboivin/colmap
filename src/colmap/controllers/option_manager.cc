@@ -698,6 +698,20 @@ void OptionManager::AddMapperOptions() {
       "Mapper.ba_global_ignore_redundant_points3D_min_coverage_gain",
       &mapper->mapper.ba_global_ignore_redundant_points3D_min_coverage_gain);
 
+  // Pose-prior options (F3 incremental, F4, F5).
+  AddDefaultOption("Mapper.use_prior_position", &mapper->use_prior_position);
+  AddDefaultOption("Mapper.use_robust_loss_on_prior_position",
+                   &mapper->use_robust_loss_on_prior_position);
+  AddDefaultOption("Mapper.prior_position_loss_scale",
+                   &mapper->prior_position_loss_scale);
+  AddDefaultOption("Mapper.use_prior_rotation", &mapper->use_prior_rotation);
+  AddDefaultOption("Mapper.prior_rotation_fallback_stddev_deg",
+                   &mapper->prior_rotation_fallback_stddev_deg);
+  AddDefaultOption("Mapper.use_prior_pose_for_registration",
+                   &mapper->use_prior_pose_for_registration);
+  AddDefaultOption("Mapper.reg_prior_max_position_error",
+                   &mapper->reg_prior_max_position_error);
+
   AddDefaultOption("Mapper.image_list_path", &mapper_image_list_path_);
   AddDefaultOption("Mapper.constant_rig_list_path",
                    &mapper_constant_rig_list_path_);
@@ -850,6 +864,33 @@ void OptionManager::AddGlobalMapperOptions() {
                        &global_mapper->mapper.rotation_averaging.reweighting,
                        RotationAveragingReweightingToString,
                        RotationAveragingReweightingFromString);
+  // F2a: absolute yaw anchors from rotation priors.
+  AddDefaultOption(
+      "GlobalMapper.ra_use_rotation_priors",
+      &global_mapper->mapper.rotation_averaging.use_rotation_priors);
+  AddDefaultOption(
+      "GlobalMapper.ra_rotation_prior_default_yaw_std_deg",
+      &global_mapper->mapper.rotation_averaging.rotation_prior_default_yaw_std_deg);
+  // F2b: init rotation averaging from priors.
+  AddDefaultOption(
+      "GlobalMapper.ra_init_from_priors",
+      &global_mapper->mapper.rotation_averaging.init_from_priors);
+
+  // Pose-prior options (F3).
+  AddDefaultOption("GlobalMapper.use_prior_position",
+                   &global_mapper->mapper.use_prior_position);
+  AddDefaultOption("GlobalMapper.use_robust_loss_on_prior_position",
+                   &global_mapper->mapper.use_robust_loss_on_prior_position);
+  AddDefaultOption("GlobalMapper.prior_position_loss_scale",
+                   &global_mapper->mapper.prior_position_loss_scale);
+  AddDefaultOption("GlobalMapper.prior_position_fallback_stddev",
+                   &global_mapper->mapper.prior_position_fallback_stddev);
+
+  // F5 via GlobalMapper.
+  AddDefaultOption("GlobalMapper.use_prior_rotation",
+                   &global_mapper->mapper.use_prior_rotation);
+  AddDefaultOption("GlobalMapper.prior_rotation_fallback_stddev_deg",
+                   &global_mapper->mapper.prior_rotation_fallback_stddev_deg);
 
   // Threshold options.
   AddDefaultOption("GlobalMapper.max_angular_reproj_error_deg",

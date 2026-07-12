@@ -34,6 +34,7 @@
 #include "colmap/estimators/generalized_pose.h"
 #include "colmap/estimators/pose.h"
 #include "colmap/estimators/triangulation.h"
+#include "colmap/scene/projection.h"
 #include "colmap/scene/reconstruction_pruning.h"
 #include "colmap/sfm/incremental_mapper_impl.h"
 #include "colmap/util/hash_containers.h"
@@ -64,6 +65,7 @@ bool IncrementalMapper::Options::Check() const {
   CHECK_OPTION_GE(max_reg_trials, 1);
   CHECK_OPTION_GE(num_threads, -1);
   CHECK_OPTION_GE(random_seed, -1);
+  CHECK_OPTION_GT(prior_rotation_fallback_stddev_deg, 0.0);
   return true;
 }
 
@@ -84,6 +86,7 @@ void IncrementalMapper::BeginReconstruction(
   triangulator_ = std::make_shared<IncrementalTriangulator>(
       database_cache_->CorrespondenceGraph(), *reconstruction_, obs_manager_);
 
+  reconstruction_aligned_to_priors_ = false;
   reg_stats_.num_shared_reg_images = 0;
   reg_stats_.num_reg_frames_per_rig.clear();
   reg_stats_.num_reg_images_per_camera.clear();
@@ -384,38 +387,133 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
     }
   }
 
+  //////////////////////////////////////////////////////////////////////////////
+  // F4 precondition: find pose prior for this image (gate + seed).
+  //////////////////////////////////////////////////////////////////////////////
+
+  const PosePrior* image_pose_prior = nullptr;
+  if (options.use_prior_pose_for_registration && options.use_prior_position &&
+      reconstruction_aligned_to_priors_) {
+    for (const auto& prior : database_cache_->PosePriors()) {
+      if (prior.corr_data_id.sensor_id.type == SensorType::CAMERA &&
+          prior.corr_data_id.id == image_id && prior.HasPosition()) {
+        image_pose_prior = &prior;
+        break;
+      }
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // 2D-3D estimation (RANSAC)
+  //////////////////////////////////////////////////////////////////////////////
+
   size_t num_inliers;
   std::vector<char> inlier_mask;
   Rigid3d cam_from_world;
-  if (!EstimateAbsolutePose(abs_pose_options,
+
+  bool ransac_ok =
+      EstimateAbsolutePose(abs_pose_options,
+                           tri_points2D,
+                           tri_points3D,
+                           &cam_from_world,
+                           &camera,
+                           &num_inliers,
+                           &inlier_mask) &&
+      num_inliers >= static_cast<size_t>(options.abs_pose_min_num_inliers);
+
+  if (ransac_ok) {
+    if (!RefineAbsolutePose(abs_pose_refinement_options,
+                            inlier_mask,
                             tri_points2D,
                             tri_points3D,
                             &cam_from_world,
-                            &camera,
-                            &num_inliers,
-                            &inlier_mask)) {
-    VLOG(2) << "Absolute pose estimation failed";
-    return false;
-  }
-
-  if (num_inliers < static_cast<size_t>(options.abs_pose_min_num_inliers)) {
-    VLOG(2) << "Absolute pose estimation failed due to insufficient inliers ("
-            << num_inliers << " < " << options.abs_pose_min_num_inliers << ")";
-    return false;
+                            &camera)) {
+      VLOG(2) << "Absolute pose refinement failed";
+      ransac_ok = false;
+    }
+  } else {
+    VLOG(2) << "Absolute pose estimation failed or insufficient inliers";
   }
 
   //////////////////////////////////////////////////////////////////////////////
-  // Pose refinement
+  // F4 gate: reject RANSAC pose if too far from prior position.
   //////////////////////////////////////////////////////////////////////////////
 
-  if (!RefineAbsolutePose(abs_pose_refinement_options,
-                          inlier_mask,
-                          tri_points2D,
-                          tri_points3D,
-                          &cam_from_world,
-                          &camera)) {
-    VLOG(2) << "Absolute pose refinement failed";
-    return false;
+  if (ransac_ok && image_pose_prior != nullptr &&
+      options.reg_prior_max_position_error > 0) {
+    const Eigen::Vector3d center =
+        cam_from_world.rotation().inverse() * (-cam_from_world.translation());
+    const double dist = (center - image_pose_prior->position).norm();
+
+    // Allow at least 3-sigma of the GPS noise, regardless of the user
+    // threshold, so tight thresholds never undercut honest GPS uncertainty.
+    double covariance_threshold = 0.0;
+    if (image_pose_prior->HasPositionCov()) {
+      const double trace_var =
+          image_pose_prior->position_covariance.trace() / 3.0;
+      constexpr double k = 3.0;
+      covariance_threshold = k * std::sqrt(trace_var);
+    }
+    const double effective_threshold = std::max(
+        options.reg_prior_max_position_error, covariance_threshold);
+    if (dist > effective_threshold) {
+      VLOG(2) << "Prior gate rejected RANSAC pose (dist=" << dist
+              << " > threshold=" << effective_threshold << ")";
+      ransac_ok = false;
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // F4 seed/fallback: if RANSAC failed, try prior-seeded pose.
+  //////////////////////////////////////////////////////////////////////////////
+
+  if (!ransac_ok) {
+    const bool can_seed = image_pose_prior != nullptr &&
+                          image_pose_prior->HasRotation();
+    if (can_seed) {
+      // Build cam_from_world from prior: C = -R^T * t => t = -R * C
+      const Eigen::Quaterniond R = image_pose_prior->rotation;
+      const Eigen::Vector3d t =
+          -(R * image_pose_prior->position);
+      const Rigid3d prior_cam_from_world{R, t};
+
+      // Count inliers of the prior pose over the harvested 2D-3D pairs.
+      const double sq_threshold =
+          options.abs_pose_max_error * options.abs_pose_max_error;
+      inlier_mask.assign(tri_points2D.size(), 0);
+      num_inliers = 0;
+      for (size_t i = 0; i < tri_points2D.size(); ++i) {
+        const double sq_err = CalculateSquaredReprojectionError(
+            tri_points2D[i], tri_points3D[i], prior_cam_from_world, camera);
+        if (sq_err <= sq_threshold) {
+          inlier_mask[i] = 1;
+          ++num_inliers;
+        }
+      }
+
+      if (num_inliers >= static_cast<size_t>(options.abs_pose_min_num_inliers)) {
+        cam_from_world = prior_cam_from_world;
+        if (RefineAbsolutePose(abs_pose_refinement_options,
+                               inlier_mask,
+                               tri_points2D,
+                               tri_points3D,
+                               &cam_from_world,
+                               &camera)) {
+          VLOG(2) << "Prior-seeded pose accepted with " << num_inliers
+                  << " inliers";
+          ransac_ok = true;
+        } else {
+          VLOG(2) << "Prior-seeded pose refinement failed";
+        }
+      } else {
+        VLOG(2) << "Prior-seeded pose has insufficient inliers (" << num_inliers
+                << " < " << options.abs_pose_min_num_inliers << ")";
+      }
+    }
+
+    if (!ransac_ok) {
+      return false;
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////
@@ -1163,6 +1261,9 @@ bool IncrementalMapper::AdjustGlobalBundle(
     }
     prior_options.ceres->prior_position_loss_scale =
         options.prior_position_loss_scale;
+    prior_options.use_prior_rotation = options.use_prior_rotation;
+    prior_options.prior_rotation_fallback_stddev_deg =
+        options.prior_rotation_fallback_stddev_deg;
     prior_options.alignment_ransac_options.random_seed = options.random_seed;
     bundle_adjuster =
         CreatePosePriorBundleAdjuster(custom_ba_options,
@@ -1198,7 +1299,11 @@ bool IncrementalMapper::AdjustGlobalBundle(
         CreateDefaultBundleAdjuster(ba_options, ba_config, *reconstruction_);
   }
 
-  return bundle_adjuster->Solve()->IsSolutionUsable();
+  const bool success = bundle_adjuster->Solve()->IsSolutionUsable();
+  if (success && use_prior_position) {
+    reconstruction_aligned_to_priors_ = true;
+  }
+  return success;
 }
 
 void IncrementalMapper::IterativeLocalRefinement(

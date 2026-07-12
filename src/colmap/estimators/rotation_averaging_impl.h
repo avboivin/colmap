@@ -80,10 +80,19 @@ class RotationAveragingProblem {
   }
 
  private:
+  // F2a: Absolute yaw anchor for a frame with gravity and rotation prior.
+  struct AnchorConstraint {
+    frame_t frame_id;    // anchored frame
+    double theta_prior;  // prior yaw angle in rotation-averaging world (rad)
+    double weight;       // 1 / sigma_yaw
+    int row_index = -1;  // row in constraint matrix A
+  };
+
   // Returns true if frame has gravity prior and gravity mode is enabled.
   bool HasFrameGravity(frame_t frame_id) const;
 
   // Allocates parameter indices for frames and cameras, initializes rotations.
+  // Also seeds initial estimates from rotation priors when init_from_priors.
   size_t AllocateParameters(const Reconstruction& reconstruction);
 
   // Builds PairConstraint for each valid image pair.
@@ -91,6 +100,7 @@ class RotationAveragingProblem {
                             const Reconstruction& reconstruction);
 
   // Builds sparse matrix A and the residual-space reweighting operator W.
+  // Also appends anchor constraint rows when use_rotation_priors is active.
   void BuildConstraintMatrix(size_t num_params,
                              const PoseGraph& pose_graph,
                              const Reconstruction& reconstruction);
@@ -99,6 +109,10 @@ class RotationAveragingProblem {
 
   // Pose priors indexed by frame ID.
   NodeHashMap<frame_t, const PosePrior*> frame_to_pose_prior_;
+
+  // F2a: precomputed anchor constraints (populated in AllocateParameters,
+  // appended to the constraint matrix in BuildConstraintMatrix).
+  std::vector<AnchorConstraint> anchor_constraints_;
 
   // Linear system components.
   Eigen::SparseMatrix<double> constraint_matrix_;  // Matrix A.

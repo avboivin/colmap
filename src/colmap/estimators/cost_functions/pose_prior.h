@@ -71,6 +71,34 @@ struct AbsolutePosePriorCostFunctor
   const Rigid3d world_from_sensor_prior_;
 };
 
+// 3-DoF error on the absolute sensor rotation, computed in the sensor frame:
+//   residual = Log(R_sensor_from_world_est * R_world_from_sensor_prior)
+// Equivalent to the rotation rows of AbsolutePosePriorCostFunctor with the
+// translation rows deleted.  The covariance is typically expressed in world
+// (ENU) axes and converted to sensor axes by the caller before wrapping in
+// CovarianceWeightedCostFunctor.
+struct AbsoluteRotationPriorCostFunctor
+    : public AutoDiffCostFunctor<AbsoluteRotationPriorCostFunctor, 3, 7> {
+ public:
+  explicit AbsoluteRotationPriorCostFunctor(
+      const Eigen::Quaterniond& sensor_from_world_prior)
+      : world_from_sensor_prior_rotation_(
+            sensor_from_world_prior.inverse()) {}
+
+  template <typename T>
+  bool operator()(const T* const sensor_from_world, T* residuals_ptr) const {
+    const Eigen::Quaternion<T> param_from_prior_rotation =
+        EigenQuaternionMap<T>(sensor_from_world) *
+        world_from_sensor_prior_rotation_.cast<T>();
+    AngleAxisFromEigenQuaternion(param_from_prior_rotation.coeffs().data(),
+                                 residuals_ptr);
+    return true;
+  }
+
+ private:
+  const Eigen::Quaterniond world_from_sensor_prior_rotation_;
+};
+
 // 3-DoF error on the sensor position in the world coordinate frame.
 struct AbsolutePosePositionPriorCostFunctor
     : public AutoDiffCostFunctor<AbsolutePosePositionPriorCostFunctor, 3, 7> {

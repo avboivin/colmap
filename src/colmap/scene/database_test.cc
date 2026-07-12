@@ -291,6 +291,8 @@ TEST_P(ParameterizedDatabaseTests, PosePrior) {
   pose_prior.position_covariance = Eigen::Matrix3d::Random();
   pose_prior.coordinate_system = PosePrior::CoordinateSystem::CARTESIAN;
   pose_prior.gravity = Eigen::Vector3d::Random();
+  pose_prior.rotation = Eigen::Quaterniond::UnitRandom();
+  pose_prior.rotation_covariance = Eigen::Matrix3d::Random();
   pose_prior.pose_prior_id = database->WritePosePrior(pose_prior);
   EXPECT_ANY_THROW(database->WritePosePrior(pose_prior));
   EXPECT_EQ(database->NumPosePriors(), 1);
@@ -298,11 +300,31 @@ TEST_P(ParameterizedDatabaseTests, PosePrior) {
                                     /*is_deprecated_image_prior=*/false),
             pose_prior);
   pose_prior.position_covariance = Eigen::Matrix3d::Identity();
+  pose_prior.rotation = Eigen::Quaterniond::Identity();
+  pose_prior.rotation_covariance = Eigen::Matrix3d::Identity();
   database->UpdatePosePrior(pose_prior);
   EXPECT_EQ(database->ReadPosePrior(pose_prior.pose_prior_id,
                                     /*is_deprecated_image_prior=*/false),
             pose_prior);
   EXPECT_THAT(database->ReadAllPosePriors(), testing::ElementsAre(pose_prior));
+
+  // Absent rotation fields round-trip as NaN sentinels.
+  PosePrior pose_prior_no_rot = pose_prior;
+  pose_prior_no_rot.corr_data_id =
+      data_t(sensor_t(SensorType::CAMERA, camera.camera_id), 99);
+  pose_prior_no_rot.rotation =
+      Eigen::Quaterniond(PosePrior::kNaN,
+                         PosePrior::kNaN,
+                         PosePrior::kNaN,
+                         PosePrior::kNaN);
+  pose_prior_no_rot.rotation_covariance =
+      Eigen::Matrix3d::Constant(PosePrior::kNaN);
+  pose_prior_no_rot.pose_prior_id = database->WritePosePrior(pose_prior_no_rot);
+  const PosePrior read_no_rot = database->ReadPosePrior(
+      pose_prior_no_rot.pose_prior_id, /*is_deprecated_image_prior=*/false);
+  EXPECT_FALSE(read_no_rot.HasRotation());
+  EXPECT_FALSE(read_no_rot.HasRotationCov());
+
   database->ClearPosePriors();
   EXPECT_EQ(database->NumPosePriors(), 0);
 }

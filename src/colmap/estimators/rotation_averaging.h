@@ -71,6 +71,20 @@ struct RotationEstimatorOptions {
   // Flag to use gravity priors for rotation averaging.
   bool use_gravity = false;
 
+  // F2a: Add absolute yaw anchor residuals from rotation priors.
+  // Effective only when use_gravity=true; anchored frames must have both
+  // gravity and rotation prior.  Fixes the global yaw gauge (north alignment).
+  bool use_rotation_priors = false;
+
+  // F2a: Default yaw uncertainty (degrees) used as anchor weight when no
+  // per-prior rotation covariance is provided.
+  double rotation_prior_default_yaw_std_deg = 10.0;
+
+  // F2b: Seed initial rotation estimates from rotation priors instead of the
+  // maximum spanning tree.  Frames without priors keep MST / identity init.
+  // When all active frames have priors, skip_initialization is set to true.
+  bool init_from_priors = false;
+
   // Flag to use stratified solving for mixed gravity systems.
   // If true and use_gravity is true, first solves the 1-DOF system with
   // gravity-only pairs, then solves the full 3-DOF system.

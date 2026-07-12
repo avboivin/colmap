@@ -409,10 +409,38 @@ bool RotationEstimator::SolveRotationAveraging(
     const std::vector<PosePrior>& pose_priors,
     const FlatHashSet<image_t>& active_image_ids,
     Reconstruction& reconstruction) {
+  // F2b: when init_from_priors is set, check if every active frame has a
+  // rotation prior.  If so, AllocateParameters will seed from priors and we
+  // can skip the MST init entirely (the prior seeds are a better starting
+  // point and MST init would overwrite them).
+  bool skip_init = options_.skip_initialization;
+  if (!skip_init && options_.init_from_priors) {
+    // Build a quick lookup of image_id -> has_rotation_prior.
+    FlatHashSet<image_t> images_with_rotation_prior;
+    for (const auto& prior : pose_priors) {
+      if (prior.corr_data_id.sensor_id.type == SensorType::CAMERA &&
+          prior.HasRotation()) {
+        images_with_rotation_prior.insert(prior.corr_data_id.id);
+      }
+    }
+    bool all_have_prior = !active_image_ids.empty();
+    for (const image_t image_id : active_image_ids) {
+      if (!images_with_rotation_prior.count(image_id)) {
+        all_have_prior = false;
+        break;
+      }
+    }
+    if (all_have_prior) {
+      skip_init = true;
+      VLOG(1) << "F2b: all active frames have rotation priors; "
+                 "skipping MST initialization.";
+    }
+  }
+
   // Initialize rotations from maximum spanning tree. Note that without
   // intialization, the gravity-aligned rotation averaging is prone to random
   // flips by 180deg.
-  if (!options_.skip_initialization) {
+  if (!skip_init) {
     InitializeFromMaximumSpanningTree(
         pose_graph, active_image_ids, reconstruction);
   }

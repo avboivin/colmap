@@ -720,5 +720,29 @@ TEST(RotationAveraging, RefineSensorFromRigFalsePreservesRig) {
   }
 }
 
+// Smoke test that init_from_priors and use_rotation_priors flags do not crash
+// and produce a reasonable result on a noiseless synthetic dataset.
+TEST(RotationAveraging, InitFromPriorsNoExtraCrash) {
+  SetPRNGSeed(7);
+
+  SyntheticDatasetOptions synthetic_dataset_options;
+  synthetic_dataset_options.num_rigs = 1;
+  synthetic_dataset_options.num_cameras_per_rig = 1;
+  synthetic_dataset_options.num_frames_per_rig = 5;
+  synthetic_dataset_options.num_points3D = 50;
+  synthetic_dataset_options.prior_gravity = true;
+  synthetic_dataset_options.two_view_geometry_has_relative_pose = true;
+  auto data = CreateTestData(synthetic_dataset_options);
+
+  {
+    Reconstruction reconstruction_copy = data.reconstruction;
+    PoseGraph pose_graph_copy = data.pose_graph;
+    RotationEstimatorOptions options = CreateRATestOptions(/*use_gravity=*/false);
+    options.init_from_priors = true;
+    EXPECT_TRUE(RunRotationAveraging(
+        options, pose_graph_copy, reconstruction_copy, data.pose_priors));
+  }
+}
+
 }  // namespace
 }  // namespace colmap

@@ -156,6 +156,19 @@ struct IncrementalPipelineOptions {
   // (chi2 for 3DOF at 95% = 7.815).
   double prior_position_loss_scale = 7.815;
 
+  // Whether to include rotation-prior residuals in the pose-prior BA (F5).
+  bool use_prior_rotation = false;
+
+  // Fallback rotational sigma (deg) when no per-prior rotation cov is stored.
+  double prior_rotation_fallback_stddev_deg = 5.0;
+
+  // Whether to gate/seed image registration with pose priors (F4).
+  bool use_prior_pose_for_registration = false;
+
+  // Gate threshold (m): reject RANSAC pose farther than this from the prior.
+  // 0 or negative disables the gate.
+  double reg_prior_max_position_error = 0.0;
+
   // Path to a folder with reconstruction snapshots during incremental
   // reconstruction. Snapshots will be saved according to the specified
   // frequency of registered images.

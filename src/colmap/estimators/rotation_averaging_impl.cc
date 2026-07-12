@@ -148,6 +148,12 @@ size_t RotationAveragingProblem::AllocateParameters(
     }
   }
 
+  // Fixed ENU<->RA change of basis (§1.2 of the telemetry plan):
+  //   R_ra_from_enu = [[1,0,0],[0,0,-1],[0,1,0]]
+  //   R_enu_from_ra = R_ra_from_enu^T = [[1,0,0],[0,0,1],[0,-1,0]]
+  static const Eigen::Matrix3d kR_enu_from_ra =
+      (Eigen::Matrix3d() << 1, 0, 0, 0, 0, 1, 0, -1, 0).finished();
+
   // Allocate frame parameters and cache frame info.
   size_t num_params = 0;
   for (const frame_t frame_id : active_frame_ids_) {
@@ -158,15 +164,32 @@ size_t RotationAveragingProblem::AllocateParameters(
         GetFrameGravityOrNull(frame_to_pose_prior_, frame_id);
     const bool has_gravity = HasFrameGravity(frame_id);
 
+    // F2b: check if we have a rotation prior to seed from.
+    const PosePrior* frame_prior = nullptr;
+    if (options_.init_from_priors || options_.use_rotation_priors) {
+      const auto it = frame_to_pose_prior_.find(frame_id);
+      if (it != frame_to_pose_prior_.end() && it->second->HasRotation()) {
+        frame_prior = it->second;
+      }
+    }
+
     if (has_gravity) {
       // Gravity-aligned frame: 1-DOF (Y-axis rotation only).
       Eigen::Matrix3d rig_from_world_rotation;
-      if (frame.MaybeRigFromWorld().has_value()) {
+
+      if (options_.init_from_priors && frame_prior != nullptr) {
+        // F2b: seed from prior.
+        // R_cam_from_ra = R_prior * R_enu_from_ra
+        const Eigen::Matrix3d R_cam_from_ra =
+            frame_prior->rotation.toRotationMatrix() * kR_enu_from_ra;
+        rig_from_world_rotation = R_cam_from_ra;
+      } else if (frame.MaybeRigFromWorld().has_value()) {
         rig_from_world_rotation =
             frame.RigFromWorld().rotation().toRotationMatrix();
       } else {
         rig_from_world_rotation = Eigen::Matrix3d::Identity();
       }
+
       estimated_rotations_[num_params] = YAxisAngleFromRotation(
           GravityAlignedRotation(*frame_gravity).transpose() *
           rig_from_world_rotation);
@@ -179,19 +202,55 @@ size_t RotationAveragingProblem::AllocateParameters(
         fixed_frame_id_ = frame_id;
         num_gauge_fixing_residuals_ = 1;
       }
+
+      // F2a: prepare yaw anchor for this frame if it has a rotation prior.
+      if (options_.use_rotation_priors && options_.use_gravity &&
+          frame_prior != nullptr) {
+        const Eigen::Matrix3d R_cam_from_ra =
+            frame_prior->rotation.toRotationMatrix() * kR_enu_from_ra;
+        const double theta_prior = YAxisAngleFromRotation(
+            GravityAlignedRotation(*frame_gravity).transpose() * R_cam_from_ra);
+
+        // Weight: 1/sigma_yaw.  Use cov(2,2) = Up-axis variance (rad^2).
+        double sigma_yaw_rad;
+        if (frame_prior->HasRotationCov() &&
+            frame_prior->rotation_covariance(2, 2) > 0) {
+          sigma_yaw_rad = std::sqrt(frame_prior->rotation_covariance(2, 2));
+        } else {
+          sigma_yaw_rad =
+              DegToRad(options_.rotation_prior_default_yaw_std_deg);
+        }
+        const double weight = 1.0 / sigma_yaw_rad;
+
+        AnchorConstraint anchor;
+        anchor.frame_id = frame_id;
+        anchor.theta_prior = theta_prior;
+        anchor.weight = weight;
+        anchor_constraints_.push_back(anchor);
+      }
     } else {
       // General frame: 3-DOF.
-      Eigen::AngleAxisd rig_from_world;
-      if (frame.MaybeRigFromWorld().has_value()) {
-        rig_from_world = Eigen::AngleAxisd(frame.RigFromWorld().rotation());
+      if (options_.init_from_priors && frame_prior != nullptr) {
+        // F2b: seed 3-DOF rotation from prior (R_cam_from_ra).
+        const Eigen::Matrix3d R_cam_from_ra =
+            frame_prior->rotation.toRotationMatrix() * kR_enu_from_ra;
+        const Eigen::AngleAxisd aa(R_cam_from_ra);
+        estimated_rotations_.segment<3>(num_params) =
+            aa.angle() * aa.axis();
       } else {
-        rig_from_world = Eigen::AngleAxisd::Identity();
+        Eigen::AngleAxisd rig_from_world;
+        if (frame.MaybeRigFromWorld().has_value()) {
+          rig_from_world = Eigen::AngleAxisd(frame.RigFromWorld().rotation());
+        } else {
+          rig_from_world = Eigen::AngleAxisd::Identity();
+        }
+        estimated_rotations_.segment<3>(num_params) =
+            rig_from_world.angle() * rig_from_world.axis();
       }
-      estimated_rotations_.segment<3>(num_params) =
-          rig_from_world.angle() * rig_from_world.axis();
       num_params += 3;
     }
   }
+
 
   // Allocate camera parameters (for unknown cam_from_rig rotations).
   for (auto& [camera_id, camera_param_idx] : camera_id_to_param_idx_) {
@@ -336,6 +395,8 @@ void RotationAveragingProblem::BuildConstraintMatrix(
       }
     }
   }
+  // F2a: one coefficient per anchor constraint.
+  num_coeffs += anchor_constraints_.size();
 
   std::vector<Eigen::Triplet<double>> coeffs;
   coeffs.reserve(num_coeffs);
@@ -436,6 +497,17 @@ void RotationAveragingProblem::BuildConstraintMatrix(
       coeffs.emplace_back(curr_row + i, fixed_frame_param_idx + i, 1);
     }
     curr_row += 3;
+  }
+
+  // F2a: add absolute yaw anchor rows.  Each anchor contributes one row with
+  // coefficient +weight at the frame's 1-DOF parameter column.  The residual
+  // b[row] = weight * wrap(theta_k - theta_prior) is set in ComputeResiduals.
+  for (auto& anchor : anchor_constraints_) {
+    if (frame_id_to_param_idx_.count(anchor.frame_id) == 0) continue;
+    const int frame_param_idx = frame_id_to_param_idx_.at(anchor.frame_id);
+    anchor.row_index = curr_row;
+    coeffs.emplace_back(curr_row, frame_param_idx, anchor.weight);
+    curr_row++;
   }
 
   // Build sparse matrix.
@@ -566,13 +638,29 @@ void RotationAveragingProblem::ComputeResiduals() {
   // Fixed frame residual.
   const int fixed_frame_param_idx = frame_id_to_param_idx_.at(fixed_frame_id_);
   if (num_gauge_fixing_residuals_ == 1) {
-    residuals_[residuals_.size() - 1] =
+    // Gauge residual sits just before anchor rows.
+    const int gauge_row =
+        static_cast<int>(residuals_.size()) -
+        static_cast<int>(anchor_constraints_.size()) - 1;
+    residuals_[gauge_row] =
         estimated_rotations_[fixed_frame_param_idx] - fixed_frame_rotation_[1];
   } else {
-    residuals_.segment<3>(residuals_.size() - 3) = RotationMatrixToAngleAxis(
+    const int gauge_start =
+        static_cast<int>(residuals_.size()) -
+        static_cast<int>(anchor_constraints_.size()) - 3;
+    residuals_.segment<3>(gauge_start) = RotationMatrixToAngleAxis(
         AngleAxisToRotationMatrix(fixed_frame_rotation_).transpose() *
         AngleAxisToRotationMatrix(
             estimated_rotations_.segment<3>(fixed_frame_param_idx)));
+  }
+
+  // F2a: anchor residuals: weight * wrap(theta_k - theta_prior).
+  for (const auto& anchor : anchor_constraints_) {
+    if (anchor.row_index < 0) continue;
+    const int frame_param_idx = frame_id_to_param_idx_.at(anchor.frame_id);
+    const double theta_k = estimated_rotations_[frame_param_idx];
+    const double raw = std::remainder(theta_k - anchor.theta_prior, 2 * EIGEN_PI);
+    residuals_[anchor.row_index] = anchor.weight * raw;
   }
 }
 

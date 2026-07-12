@@ -490,6 +490,16 @@ int RunPosePriorMapper(int argc, char** argv) {
                            &options.mapper->use_robust_loss_on_prior_position);
   options.AddDefaultOption("prior_position_loss_scale",
                            &options.mapper->prior_position_loss_scale);
+  // F5: rotation priors in bundle adjustment.
+  options.AddDefaultOption("use_prior_rotation",
+                           &options.mapper->use_prior_rotation);
+  options.AddDefaultOption("prior_rotation_fallback_stddev_deg",
+                           &options.mapper->prior_rotation_fallback_stddev_deg);
+  // F4: gate/seed registration with pose priors.
+  options.AddDefaultOption("use_prior_pose_for_registration",
+                           &options.mapper->use_prior_pose_for_registration);
+  options.AddDefaultOption("reg_prior_max_position_error",
+                           &options.mapper->reg_prior_max_position_error);
   if (!options.Parse(argc, argv)) {
     return EXIT_FAILURE;
   }
@@ -672,6 +682,17 @@ int RunRotationAverager(int argc, char** argv) {
       "use_stratified", &controller_options.rotation_estimation.use_stratified);
   options.AddDefaultOption("refine_gravity",
                            &controller_options.refine_gravity);
+  // F2a: yaw anchors from telemetry rotation priors.
+  options.AddDefaultOption(
+      "use_rotation_priors",
+      &controller_options.rotation_estimation.use_rotation_priors);
+  options.AddDefaultOption(
+      "rotation_prior_default_yaw_std_deg",
+      &controller_options.rotation_estimation.rotation_prior_default_yaw_std_deg);
+  // F2b: seed rotations from priors and skip MST init.
+  options.AddDefaultOption(
+      "init_from_priors",
+      &controller_options.rotation_estimation.init_from_priors);
   options.AddGravityRefinerOptions();
   if (!options.Parse(argc, argv)) {
     return EXIT_FAILURE;

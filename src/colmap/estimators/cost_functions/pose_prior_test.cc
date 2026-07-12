@@ -198,6 +198,40 @@ TEST(RelativePosePriorCostFunctor, Nominal) {
   EXPECT_NEAR(residuals[5], 2, 1e-6);
 }
 
+TEST(AbsoluteRotationPriorCostFunctor, Nominal) {
+  // Identity prior: residuals should be zero when pose matches.
+  const Eigen::Quaterniond prior = Eigen::Quaterniond::Identity();
+  std::unique_ptr<ceres::CostFunction> cost_function(
+      AbsoluteRotationPriorCostFunctor::Create(prior));
+
+  double sensor_from_world[7] = {0, 0, 0, 1, 0, 0, 0};
+  double residuals[3];
+  const double* parameters[1] = {sensor_from_world};
+  EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
+  EXPECT_NEAR(residuals[0], 0, 1e-6);
+  EXPECT_NEAR(residuals[1], 0, 1e-6);
+  EXPECT_NEAR(residuals[2], 0, 1e-6);
+
+  // 90-degree rotation around Y axis: axis-angle residual should have
+  // magnitude pi/2 along the Y axis.
+  Eigen::Matrix3d rotation_matrix;
+  rotation_matrix << 0, 0, 1, 0, 1, 0, -1, 0, 0;
+  Eigen::Map<Eigen::Quaterniond>(sensor_from_world) =
+      Eigen::Quaterniond(rotation_matrix);
+  EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
+  EXPECT_NEAR(residuals[0], 0, 1e-6);
+  EXPECT_NEAR(residuals[1], DegToRad(90.0), 1e-6);
+  EXPECT_NEAR(residuals[2], 0, 1e-6);
+
+  // When param matches prior, residual is zero regardless of prior value.
+  const Eigen::Quaterniond non_identity_prior(rotation_matrix);
+  cost_function.reset(AbsoluteRotationPriorCostFunctor::Create(non_identity_prior));
+  EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
+  EXPECT_NEAR(residuals[0], 0, 1e-6);
+  EXPECT_NEAR(residuals[1], 0, 1e-6);
+  EXPECT_NEAR(residuals[2], 0, 1e-6);
+}
+
 TEST(CovarianceWeightedCostFunctor, AbsolutePosePositionPriorCostFunctor) {
   const Rigid3d cam_from_world(Eigen::Quaterniond::UnitRandom(),
                                Eigen::Vector3d::Random());

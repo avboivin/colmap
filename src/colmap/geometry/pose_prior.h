@@ -37,6 +37,7 @@
 #include <ostream>
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 
 namespace colmap {
 
@@ -68,9 +69,19 @@ struct PosePrior {
   // The gravity (down) in the sensor coordinate system.
   Eigen::Vector3d gravity = Eigen::Vector3d::Constant(kNaN);
 
+  // The prior rotation of the sensor as cam_from_world, where world is the same
+  // coordinate frame as `position` (local ENU axes when GPS priors are
+  // converted). Stored/serialized in Eigen coeffs order (x, y, z, w).
+  Eigen::Quaterniond rotation = Eigen::Quaterniond(kNaN, kNaN, kNaN, kNaN);
+  // Covariance (rad^2) of the right-perturbation error delta, expressed in
+  // world (ENU) axes: R_est = R_prior * Exp(delta^). cov(2,2) is yaw (Up).
+  Eigen::Matrix3d rotation_covariance = Eigen::Matrix3d::Constant(kNaN);
+
   inline bool HasPosition() const { return position.allFinite(); }
   inline bool HasPositionCov() const { return position_covariance.allFinite(); }
   inline bool HasGravity() const { return gravity.allFinite(); }
+  inline bool HasRotation() const { return rotation.coeffs().allFinite(); }
+  inline bool HasRotationCov() const { return rotation_covariance.allFinite(); }
 
   bool operator==(const PosePrior& other) const;
   bool operator!=(const PosePrior& other) const;
@@ -85,5 +96,12 @@ std::optional<Eigen::Vector3d> GravityFromExifOrientation(int orientation);
 // Returns the number of 90 deg counter-clockwise rotations needed to make the
 // sensor upright.
 int ComputeRot90FromGravity(const Eigen::Vector3d& gravity);
+
+// Compose a cam_from_enu rotation prior from a camera-frame gravity (down)
+// vector and a compass heading of the camera's viewing direction (radians,
+// clockwise from North, i.e. standard compass bearing of +Z_cam projected onto
+// the horizontal plane).
+Eigen::Quaterniond RotationPriorFromGravityAndHeading(
+    const Eigen::Vector3d& gravity_in_cam, double heading_rad);
 
 }  // namespace colmap
