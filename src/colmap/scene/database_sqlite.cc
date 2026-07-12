@@ -1274,9 +1274,12 @@ class SqliteDatabase : public Database {
         7,
         static_cast<sqlite3_int64>(pose_prior.coordinate_system)));
     WriteStaticMatrixBlob(sql_stmt_write_pose_prior_, pose_prior.gravity, 8);
+    // Important: rotation_coeffs must outlive the if-block because
+    // sqlite3_step reads SQLITE_STATIC-bound data after all binds.
+    Eigen::Vector4d rotation_coeffs;
     if (pose_prior.HasRotation()) {
-      const Eigen::Vector4d coeffs = pose_prior.rotation.coeffs();
-      WriteStaticMatrixBlob(sql_stmt_write_pose_prior_, coeffs, 9);
+      rotation_coeffs = pose_prior.rotation.coeffs();
+      WriteStaticMatrixBlob(sql_stmt_write_pose_prior_, rotation_coeffs, 9);
     } else {
       SQLITE3_CALL(sqlite3_bind_null(sql_stmt_write_pose_prior_, 9));
     }
@@ -1540,9 +1543,12 @@ class SqliteDatabase : public Database {
         6,
         static_cast<sqlite3_int64>(pose_prior.coordinate_system)));
     WriteStaticMatrixBlob(sql_stmt_update_pose_prior_, pose_prior.gravity, 7);
+    // Important: rotation_coeffs must outlive the if-block because
+    // sqlite3_step reads SQLITE_STATIC-bound data after all binds.
+    Eigen::Vector4d rotation_coeffs;
     if (pose_prior.HasRotation()) {
-      const Eigen::Vector4d coeffs = pose_prior.rotation.coeffs();
-      WriteStaticMatrixBlob(sql_stmt_update_pose_prior_, coeffs, 8);
+      rotation_coeffs = pose_prior.rotation.coeffs();
+      WriteStaticMatrixBlob(sql_stmt_update_pose_prior_, rotation_coeffs, 8);
     } else {
       SQLITE3_CALL(sqlite3_bind_null(sql_stmt_update_pose_prior_, 8));
     }

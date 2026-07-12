@@ -216,7 +216,7 @@ TEST(AbsoluteRotationPriorCostFunctor, Nominal) {
   // magnitude pi/2 along the Y axis.
   Eigen::Matrix3d rotation_matrix;
   rotation_matrix << 0, 0, 1, 0, 1, 0, -1, 0, 0;
-  Eigen::Map<Eigen::Quaterniond>(sensor_from_world) =
+  Eigen::Map<Eigen::Quaterniond>(static_cast<double*>(sensor_from_world)) =
       Eigen::Quaterniond(rotation_matrix);
   EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
   EXPECT_NEAR(residuals[0], 0, 1e-6);

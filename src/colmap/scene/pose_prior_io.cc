@@ -66,6 +66,9 @@ std::vector<std::string> SplitCsvLine(const std::string& line) {
   while (std::getline(ss, field, ',')) {
     fields.push_back(Trim(field));
   }
+  if (!line.empty() && line.back() == ',') {
+    fields.push_back("");
+  }
   return fields;
 }
 
@@ -193,7 +196,8 @@ bool ParsePosePriorCsv(const std::filesystem::path& csv_path,
     ++stats->rows_parsed;
 
     std::vector<std::string> fields = SplitCsvLine(line);
-    // SplitCsvLine may over-count trailing commas; require at least 24 fields.
+    // Require 24 fields. Trailing empty fields (MSVC may omit the final empty
+    // token after a trailing comma; other libcs may keep it) are tolerated.
     if (fields.size() < 24) {
       ++stats->rejected_invalid;
       LOG(WARNING) << "Skipping row with " << fields.size()
