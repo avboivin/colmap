@@ -424,16 +424,7 @@ bool ImportPosePriorsFromCsv(Database* database,
     return false;
   }
 
-  if (dry_run) {
-    return true;
-  }
-
-  DatabaseTransaction transaction(database);
-  if (clear_existing) {
-    database->ClearPosePriors();
-  }
-
-  // Index existing priors by corr_data_id for upsert.
+  // Index existing priors by corr_data_id for upsert / coord-system checks.
   std::unordered_map<data_t, PosePrior> existing;
   if (!clear_existing) {
     for (auto& prior : database->ReadAllPosePriors()) {
@@ -441,11 +432,84 @@ bool ImportPosePriorsFromCsv(Database* database,
     }
   }
 
+  // Reject CSV that would mix coordinate systems with priors already in the DB
+  // (ConvertPosePriorsToENU THROWs on mixed systems with a less actionable msg).
+  std::optional<PosePrior::CoordinateSystem> csv_coord;
+  for (const auto& prior : pose_priors) {
+    if (prior.HasPosition()) {
+      csv_coord = prior.coordinate_system;
+      break;
+    }
+  }
+  if (csv_coord.has_value()) {
+    for (const auto& [data_id, prior] : existing) {
+      if (!prior.HasPosition()) {
+        continue;
+      }
+      if (prior.coordinate_system == PosePrior::CoordinateSystem::UNDEFINED) {
+        continue;
+      }
+      if (prior.coordinate_system == csv_coord.value()) {
+        continue;
+      }
+      // An update that replaces position will overwrite the coord system; that
+      // is fine. A prior not present in this CSV (or CSV row without position)
+      // would leave a conflicting system in the table.
+      bool replaced_by_csv = false;
+      for (const auto& incoming : pose_priors) {
+        if (incoming.corr_data_id == data_id && incoming.HasPosition()) {
+          replaced_by_csv = true;
+          break;
+        }
+      }
+      if (!replaced_by_csv) {
+        if (error_message) {
+          *error_message =
+              "CSV coord_system (" +
+              PosePrior::CoordinateSystemToString(csv_coord.value()) +
+              ") conflicts with existing DB prior coord_system (" +
+              PosePrior::CoordinateSystemToString(prior.coordinate_system) +
+              "). Clear existing priors or use a matching coord_system.";
+        }
+        return false;
+      }
+    }
+  }
+
+  if (dry_run) {
+    return true;
+  }
+
+  DatabaseTransaction transaction(database);
+  if (clear_existing) {
+    database->ClearPosePriors();
+    existing.clear();
+  }
+
   for (PosePrior& prior : pose_priors) {
     const auto it = existing.find(prior.corr_data_id);
     if (it != existing.end()) {
-      prior.pose_prior_id = it->second.pose_prior_id;
-      database->UpdatePosePrior(prior);
+      // Field-wise merge: absent CSV fields preserve existing DB values
+      // (e.g. EXIF gravity must survive a position-only CSV row).
+      PosePrior merged = it->second;
+      if (prior.HasPosition()) {
+        merged.position = prior.position;
+        merged.coordinate_system = prior.coordinate_system;
+      }
+      if (prior.HasPositionCov()) {
+        merged.position_covariance = prior.position_covariance;
+      }
+      if (prior.HasGravity()) {
+        merged.gravity = prior.gravity;
+      }
+      if (prior.HasRotation()) {
+        merged.rotation = prior.rotation;
+      }
+      if (prior.HasRotationCov()) {
+        merged.rotation_covariance = prior.rotation_covariance;
+      }
+      merged.pose_prior_id = it->second.pose_prior_id;
+      database->UpdatePosePrior(merged);
       ++stats->updated;
     } else {
       prior.pose_prior_id = database->WritePosePrior(prior);

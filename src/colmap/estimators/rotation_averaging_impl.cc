@@ -177,8 +177,11 @@ size_t RotationAveragingProblem::AllocateParameters(
       // Gravity-aligned frame: 1-DOF (Y-axis rotation only).
       Eigen::Matrix3d rig_from_world_rotation;
 
-      if (options_.init_from_priors && frame_prior != nullptr) {
-        // F2b: seed from prior.
+      if (options_.init_from_priors && options_.skip_initialization &&
+          frame_prior != nullptr && !frame.MaybeRigFromWorld().has_value()) {
+        // F2b: seed from prior only when MST was skipped (full prior coverage)
+        // and no existing estimate is present (do not override a refinement
+        // pass that already has poses).
         // R_cam_from_ra = R_prior * R_enu_from_ra
         const Eigen::Matrix3d R_cam_from_ra =
             frame_prior->rotation.toRotationMatrix() * kR_enu_from_ra;
@@ -220,7 +223,8 @@ size_t RotationAveragingProblem::AllocateParameters(
           sigma_yaw_rad =
               DegToRad(options_.rotation_prior_default_yaw_std_deg);
         }
-        const double weight = 1.0 / sigma_yaw_rad;
+        const double weight =
+            DegToRad(options_.irls_loss_parameter_sigma) / sigma_yaw_rad;
 
         AnchorConstraint anchor;
         anchor.frame_id = frame_id;
@@ -230,7 +234,8 @@ size_t RotationAveragingProblem::AllocateParameters(
       }
     } else {
       // General frame: 3-DOF.
-      if (options_.init_from_priors && frame_prior != nullptr) {
+      if (options_.init_from_priors && options_.skip_initialization &&
+          frame_prior != nullptr && !frame.MaybeRigFromWorld().has_value()) {
         // F2b: seed 3-DOF rotation from prior (R_cam_from_ra).
         const Eigen::Matrix3d R_cam_from_ra =
             frame_prior->rotation.toRotationMatrix() * kR_enu_from_ra;
@@ -859,7 +864,10 @@ bool RotationAveragingSolver::SolveL1Regression(
 
 std::optional<Eigen::VectorXd> RotationAveragingSolver::ComputeIRLSWeights(
     const RotationAveragingProblem& problem, double sigma) const {
-  Eigen::VectorXd weights(problem.NumResiduals());
+  // Initialize to 1 so gauge and anchor rows stay unit-weighted unless
+  // overwritten. Pair rows are filled below; anchors are already whitened in
+  // A/b and must not receive garbage from uninitialized memory.
+  Eigen::VectorXd weights = Eigen::VectorXd::Ones(problem.NumResiduals());
 
   for (const auto& [pair_id, constraint] : problem.PairConstraints()) {
     double err_squared = 0;
@@ -902,13 +910,16 @@ std::optional<Eigen::VectorXd> RotationAveragingSolver::ComputeIRLSWeights(
     }
   }
 
-  // Set gauge-fixing weights to 1.
+  // Gauge-fixing rows sit just before the anchor rows
+  // (layout: pairs → gauge → anchors).
+  const int num_anchors = problem.NumAnchorResiduals();
   const int gauge_rows = problem.NumGaugeFixingResiduals();
   if (gauge_rows == 1) {
-    weights[problem.NumResiduals() - 1] = 1;
+    weights[problem.NumResiduals() - num_anchors - 1] = 1;
   } else {
-    weights.segment<3>(problem.NumResiduals() - 3).setConstant(1);
+    weights.segment<3>(problem.NumResiduals() - num_anchors - 3).setConstant(1);
   }
+  // Anchor rows keep weight 1 (whitening already lives in A/b).
 
   // Fold the residual-space reweighting W into the IRLS weights so the solver
   // can operate on the plain constraint matrix, scaling each robust weight by W

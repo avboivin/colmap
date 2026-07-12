@@ -405,10 +405,10 @@ bool GlobalMapper::IterativeBundleAdjustment(
   const std::vector<PosePrior>& pose_priors = database_cache_->PosePriors();
 
   for (int ite = 0; ite < num_iterations; ite++) {
-    // Optional fixed-rotation stage: optimize positions only.
-    // Run as a standard BA even when use_prior_position is true, because the
-    // full prior BA already aligns on each call (skip the duplicate align here
-    // by running the non-prior path with fixed rotations).
+    // Optional fixed-rotation stage: optimize positions only while holding
+    // rotations fixed. When use_prior_position is enabled this still runs the
+    // pose-prior BA (alignment + position priors); rotations remain constant
+    // via constant_rig_from_world_rotation.
     if (!skip_fixed_rotation_stage) {
       BundleAdjustmentOptions opts_position_only = options;
       opts_position_only.constant_rig_from_world_rotation = true;

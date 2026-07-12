@@ -75,6 +75,9 @@ class RotationAveragingProblem {
   int NumParameters() const { return constraint_matrix_.cols(); }
   int NumResiduals() const { return constraint_matrix_.rows(); }
   int NumGaugeFixingResiduals() const { return num_gauge_fixing_residuals_; }
+  int NumAnchorResiduals() const {
+    return static_cast<int>(anchor_constraints_.size());
+  }
   const NodeHashMap<image_pair_t, PairConstraint>& PairConstraints() const {
     return pair_constraints_;
   }
@@ -84,7 +87,7 @@ class RotationAveragingProblem {
   struct AnchorConstraint {
     frame_t frame_id;    // anchored frame
     double theta_prior;  // prior yaw angle in rotation-averaging world (rad)
-    double weight;       // 1 / sigma_yaw
+    double weight;       // ref_sigma / sigma_yaw (IRLS-scale relative)
     int row_index = -1;  // row in constraint matrix A
   };
 
@@ -92,7 +95,8 @@ class RotationAveragingProblem {
   bool HasFrameGravity(frame_t frame_id) const;
 
   // Allocates parameter indices for frames and cameras, initializes rotations.
-  // Also seeds initial estimates from rotation priors when init_from_priors.
+  // Seeds from rotation priors only when init_from_priors && skip_initialization
+  // (full coverage) and the frame has no existing pose.
   size_t AllocateParameters(const Reconstruction& reconstruction);
 
   // Builds PairConstraint for each valid image pair.

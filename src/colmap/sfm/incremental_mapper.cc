@@ -407,6 +407,10 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
   // 2D-3D estimation (RANSAC)
   //////////////////////////////////////////////////////////////////////////////
 
+  // Snapshot intrinsics so a rejected registration (gate or failed refine)
+  // does not leave half-refined camera parameters behind.
+  const std::vector<double> camera_params_backup = camera.params;
+
   size_t num_inliers;
   std::vector<char> inlier_mask;
   Rigid3d cam_from_world;
@@ -460,6 +464,7 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
       VLOG(2) << "Prior gate rejected RANSAC pose (dist=" << dist
               << " > threshold=" << effective_threshold << ")";
       ransac_ok = false;
+      camera.params = camera_params_backup;
     }
   }
 
@@ -468,6 +473,7 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
   //////////////////////////////////////////////////////////////////////////////
 
   if (!ransac_ok) {
+    camera.params = camera_params_backup;
     const bool can_seed = image_pose_prior != nullptr &&
                           image_pose_prior->HasRotation();
     if (can_seed) {
@@ -504,6 +510,7 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
           ransac_ok = true;
         } else {
           VLOG(2) << "Prior-seeded pose refinement failed";
+          camera.params = camera_params_backup;
         }
       } else {
         VLOG(2) << "Prior-seeded pose has insufficient inliers (" << num_inliers
@@ -512,6 +519,7 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
     }
 
     if (!ransac_ok) {
+      camera.params = camera_params_backup;
       return false;
     }
   }
@@ -1299,8 +1307,9 @@ bool IncrementalMapper::AdjustGlobalBundle(
         CreateDefaultBundleAdjuster(ba_options, ba_config, *reconstruction_);
   }
 
-  const bool success = bundle_adjuster->Solve()->IsSolutionUsable();
-  if (success && use_prior_position) {
+  const auto summary = bundle_adjuster->Solve();
+  const bool success = summary->IsSolutionUsable();
+  if (success && use_prior_position && summary->aligned_to_pose_priors) {
     reconstruction_aligned_to_priors_ = true;
   }
   return success;

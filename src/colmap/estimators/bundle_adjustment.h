@@ -67,6 +67,11 @@ struct BundleAdjustmentSummary {
   // Excludes residuals where all connected parameters are constant.
   int num_residuals = 0;
 
+  // True when a pose-prior BA successfully Sim3-aligned the reconstruction
+  // into the prior/ENU world. False for default BA and for prior BA that
+  // silently degraded after alignment failure.
+  bool aligned_to_pose_priors = false;
+
   bool IsSolutionUsable() const;
   virtual std::string BriefReport() const;
 

@@ -40,6 +40,7 @@
 #include "colmap/util/misc.h"
 #include "colmap/util/threading.h"
 
+#include <cmath>
 #include <iomanip>
 
 namespace colmap {
@@ -921,10 +922,10 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
         pose_priors_.end());
 
     // AlignReconstruction uses only position priors internally.
-    const bool use_prior_position = AlignReconstruction();
+    aligned_to_pose_priors_ = AlignReconstruction();
 
     // Fix 7-DOFs of BA problem if not enough valid pose priors.
-    if (use_prior_position) {
+    if (aligned_to_pose_priors_) {
       // Normalize the reconstruction to avoid any numerical instability but
       // do not transform priors as they will be transformed when added to
       // ceres::Problem.
@@ -937,7 +938,9 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
     default_bundle_adjuster_ = std::make_unique<DefaultBundleAdjuster>(
         options_, config_, reconstruction);
 
-    if (use_prior_position || prior_options_.use_prior_rotation) {
+    // Absolute rotation priors are only valid after successful Sim3 alignment
+    // into the prior/ENU world. Position priors likewise require alignment.
+    if (aligned_to_pose_priors_) {
       prior_loss_function_ = CreateLossFunction(
           prior_options_.ceres->prior_position_loss_function_type,
           prior_options_.ceres->prior_position_loss_scale);
@@ -960,7 +963,9 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
     std::shared_ptr<ceres::Problem> problem =
         default_bundle_adjuster_->Problem();
     if (problem->NumResiduals() == 0) {
-      return std::make_shared<BundleAdjustmentSummary>();
+      auto summary = std::make_shared<BundleAdjustmentSummary>();
+      summary->aligned_to_pose_priors = aligned_to_pose_priors_;
+      return summary;
     }
 
     ceres::Solver::Summary ceres_summary =
@@ -972,8 +977,10 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
       PrintSolverSummary(ceres_summary, "Pose Prior Bundle adjustment report");
     }
 
-    return CreateSummaryAndLogFailure(std::move(ceres_summary),
-                                      "Pose prior bundle adjustment");
+    auto summary = CreateSummaryAndLogFailure(std::move(ceres_summary),
+                                              "Pose prior bundle adjustment");
+    summary->aligned_to_pose_priors = aligned_to_pose_priors_;
+    return summary;
   }
 
   std::shared_ptr<ceres::Problem>& Problem() override {
@@ -1049,12 +1056,13 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
 
       // Convert covariance from world (ENU) axes to sensor frame:
       //   cov_sensor = R_prior * cov_world * R_prior^T  (§1.3).
-      const double fallback_var =
+      const double fallback_stddev =
           DegToRad(prior_options_.prior_rotation_fallback_stddev_deg);
       const Eigen::Matrix3d rot_cov_world =
           pose_prior.HasRotationCov()
               ? pose_prior.rotation_covariance
-              : (fallback_var * fallback_var * Eigen::Matrix3d::Identity());
+              : (fallback_stddev * fallback_stddev *
+                 Eigen::Matrix3d::Identity());
       const Eigen::Matrix3d rot_cov_sensor =
           R_prior * rot_cov_world * R_prior.transpose();
 
@@ -1072,8 +1080,11 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
       std::vector<double> rms_vars;
       rms_vars.reserve(pose_priors_.size());
       for (const auto& pose_prior : pose_priors_) {
+        if (!pose_prior.HasPosition() || !pose_prior.HasPositionCov()) {
+          continue;
+        }
         const double trace = pose_prior.position_covariance.trace();
-        if (trace <= 0.0) {
+        if (!std::isfinite(trace) || trace <= 0.0) {
           continue;
         }
         rms_vars.push_back(trace / 3.0);
@@ -1124,6 +1135,7 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
   PosePriorBundleAdjustmentOptions prior_options_;
   std::vector<PosePrior> pose_priors_;
   Reconstruction& reconstruction_;
+  bool aligned_to_pose_priors_ = false;
 
   std::unique_ptr<DefaultBundleAdjuster> default_bundle_adjuster_;
   std::unique_ptr<ceres::LossFunction> prior_loss_function_;

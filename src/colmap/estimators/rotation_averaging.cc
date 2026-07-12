@@ -409,13 +409,11 @@ bool RotationEstimator::SolveRotationAveraging(
     const std::vector<PosePrior>& pose_priors,
     const FlatHashSet<image_t>& active_image_ids,
     Reconstruction& reconstruction) {
-  // F2b: when init_from_priors is set, check if every active frame has a
-  // rotation prior.  If so, AllocateParameters will seed from priors and we
-  // can skip the MST init entirely (the prior seeds are a better starting
-  // point and MST init would overwrite them).
-  bool skip_init = options_.skip_initialization;
-  if (!skip_init && options_.init_from_priors) {
-    // Build a quick lookup of image_id -> has_rotation_prior.
+  // F2b: when init_from_priors is set, only skip MST (and seed from priors)
+  // if every active frame has a rotation prior. Partial coverage must not
+  // mix MST-gauge seeds with ENU-gauge prior seeds.
+  RotationEstimatorOptions problem_options = options_;
+  if (!problem_options.skip_initialization && problem_options.init_from_priors) {
     FlatHashSet<image_t> images_with_rotation_prior;
     for (const auto& prior : pose_priors) {
       if (prior.corr_data_id.sensor_id.type == SensorType::CAMERA &&
@@ -431,23 +429,26 @@ bool RotationEstimator::SolveRotationAveraging(
       }
     }
     if (all_have_prior) {
-      skip_init = true;
+      problem_options.skip_initialization = true;
       VLOG(1) << "F2b: all active frames have rotation priors; "
                  "skipping MST initialization.";
+    } else {
+      VLOG(1) << "F2b: partial rotation-prior coverage; keeping MST init "
+                 "(no prior seeding).";
     }
   }
 
   // Initialize rotations from maximum spanning tree. Note that without
   // intialization, the gravity-aligned rotation averaging is prone to random
   // flips by 180deg.
-  if (!skip_init) {
+  if (!problem_options.skip_initialization) {
     InitializeFromMaximumSpanningTree(
         pose_graph, active_image_ids, reconstruction);
   }
 
   // Build the optimization problem.
   RotationAveragingProblem problem(
-      pose_graph, pose_priors, options_, active_image_ids, reconstruction);
+      pose_graph, pose_priors, problem_options, active_image_ids, reconstruction);
 
   // Solve and apply results.
   RotationAveragingSolver solver(options_);

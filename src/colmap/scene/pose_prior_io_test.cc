@@ -157,8 +157,10 @@ TEST_F(PosePriorIoTests, UpsertUpdatesExisting) {
   existing.corr_data_id = database_->ReadAllImages().front().DataId();
   existing.position = Eigen::Vector3d(9, 9, 9);
   existing.coordinate_system = PosePrior::CoordinateSystem::CARTESIAN;
+  existing.gravity = Eigen::Vector3d(0, 1, 0);
   existing.pose_prior_id = database_->WritePosePrior(existing);
 
+  // Position-only CSV row must preserve EXIF/existing gravity.
   const auto path =
       WriteTempCsv("img1.jpg,CARTESIAN,1,2,3,,,,,,,,,,,,,,,,,,,\n");
 
@@ -176,6 +178,30 @@ TEST_F(PosePriorIoTests, UpsertUpdatesExisting) {
   const PosePrior read = database_->ReadPosePrior(
       existing.pose_prior_id, /*is_deprecated_image_prior=*/false);
   EXPECT_NEAR(read.position.x(), 1, 1e-9);
+  EXPECT_TRUE(read.HasGravity());
+  EXPECT_NEAR(read.gravity.y(), 1, 1e-9);
+}
+
+TEST_F(PosePriorIoTests, RejectCoordSystemConflictWithDb) {
+  PosePrior existing;
+  existing.corr_data_id = database_->ReadAllImages()[1].DataId();  // img2
+  existing.position = Eigen::Vector3d(1, 2, 3);
+  existing.coordinate_system = PosePrior::CoordinateSystem::WGS84;
+  existing.pose_prior_id = database_->WritePosePrior(existing);
+
+  // CSV only updates img1 as CARTESIAN; img2 stays WGS84 → conflict.
+  const auto path =
+      WriteTempCsv("img1.jpg,CARTESIAN,1,2,3,,,,,,,,,,,,,,,,,,,\n");
+
+  PosePriorImportStats stats;
+  std::string error;
+  EXPECT_FALSE(ImportPosePriorsFromCsv(database_.get(),
+                                       path,
+                                       /*clear_existing=*/false,
+                                       /*dry_run=*/true,
+                                       &stats,
+                                       &error));
+  EXPECT_FALSE(error.empty());
 }
 
 TEST_F(PosePriorIoTests, DryRunDoesNotWrite) {
