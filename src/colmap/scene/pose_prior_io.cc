@@ -470,9 +470,9 @@ bool ImportPosePriorsFromCsv(Database* database,
         if (error_message) {
           *error_message =
               "CSV coord_system (" +
-              PosePrior::CoordinateSystemToString(csv_coord.value()) +
+              std::string(PosePrior::CoordinateSystemToString(csv_coord.value())) +
               ") conflicts with existing DB prior coord_system (" +
-              PosePrior::CoordinateSystemToString(prior.coordinate_system) +
+              std::string(PosePrior::CoordinateSystemToString(prior.coordinate_system)) +
               "). Clear existing priors or use a matching coord_system.";
         }
         return false;
