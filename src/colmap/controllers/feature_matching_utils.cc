@@ -94,8 +94,14 @@ void FeatureMatcherWorker::Run() {
   matching_options_.max_num_matches = std::min<int>(
       matching_options_.max_num_matches, cache_->MaxNumKeypoints());
 
-  std::unique_ptr<FeatureMatcher> matcher =
-      FeatureMatcher::Create(matching_options_);
+  std::unique_ptr<FeatureMatcher> matcher;
+  try {
+    matcher = FeatureMatcher::Create(matching_options_);
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Exception during feature matcher creation: " << e.what();
+    SignalInvalidSetup();
+    return;
+  }
   if (matcher == nullptr) {
     LOG(ERROR) << "Failed to create feature matcher.";
     SignalInvalidSetup();

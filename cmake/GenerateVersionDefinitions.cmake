@@ -45,11 +45,28 @@ elseif(Git_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
         ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
 
     # Re-generate version.cc if the git index changes.
-    set_property(
-        DIRECTORY APPEND 
-        PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/.git/index"
-    )
+    if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+        set_property(
+            DIRECTORY APPEND 
+            PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/.git/index"
+        )
+    else()
+        # It's a file (submodule), read the gitdir path
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/.git" gitdir_content)
+        string(REGEX MATCH "gitdir: *(.*)" _match "${gitdir_content}")
+        set(gitdir "${CMAKE_MATCH_1}")
+        if(NOT IS_ABSOLUTE "${gitdir}")
+            get_filename_component(gitdir "${CMAKE_CURRENT_SOURCE_DIR}/${gitdir}" ABSOLUTE)
+        endif()
+        if(EXISTS "${gitdir}/index")
+            set_property(
+                DIRECTORY APPEND 
+                PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${gitdir}/index"
+            )
+        endif()
+    endif()
 else()
     set(GIT_COMMIT_ID "Unknown")
     set(GIT_COMMIT_DATE "Unknown")

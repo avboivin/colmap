@@ -159,8 +159,14 @@ class FeatureExtractorThread : public Thread {
       THROW_CHECK(opengl_context_->MakeCurrent());
     }
 
-    std::unique_ptr<FeatureExtractor> extractor =
-        FeatureExtractor::Create(extraction_options_);
+    std::unique_ptr<FeatureExtractor> extractor;
+    try {
+      extractor = FeatureExtractor::Create(extraction_options_);
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Exception during feature extractor creation: " << e.what();
+      SignalInvalidSetup();
+      return;
+    }
     if (extractor == nullptr) {
       LOG(ERROR) << "Failed to create feature extractor.";
       SignalInvalidSetup();

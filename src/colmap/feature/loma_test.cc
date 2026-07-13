@@ -104,6 +104,43 @@ TEST(LomaTest, Nominal) {
   EXPECT_GT(num_self_matches, 0.5 * matches.size());
 }
 
+TEST(LomaTest, NominalGpu) {
+#if defined(COLMAP_CUDA_ENABLED)
+  Bitmap image;
+  CreateRandomRgbImage(512, 512, &image);
+
+  FeatureExtractionOptions extraction_options(FeatureExtractorType::LOMA_B);
+  extraction_options.use_gpu = true;
+  extraction_options.loma->min_score = 0.0;
+  auto extractor = CreateLomaFeatureExtractor(extraction_options);
+  auto keypoints = std::make_shared<FeatureKeypoints>();
+  auto descriptors = std::make_shared<FeatureDescriptors>();
+  ASSERT_TRUE(extractor->Extract(image, keypoints.get(), descriptors.get()));
+
+  EXPECT_GT(keypoints->size(), 0);
+  EXPECT_EQ(keypoints->size(), descriptors->data.rows());
+  EXPECT_EQ(descriptors->type, FeatureExtractorType::LOMA_B);
+
+  Camera camera;
+  camera.width = image.Width();
+  camera.height = image.Height();
+
+  FeatureMatchingOptions matching_options(FeatureMatcherType::LOMA_B);
+  matching_options.use_gpu = true;
+  matching_options.loma->min_score = 0.0;
+  auto matcher = CreateLomaFeatureMatcher(matching_options);
+
+  FeatureMatches matches;
+  const FeatureMatcher::Image image1{1, &camera, keypoints, descriptors};
+  const FeatureMatcher::Image image2{2, &camera, keypoints, descriptors};
+  matcher->Match(image1, image2, &matches);
+
+  ASSERT_GT(matches.size(), 0);
+#else
+  GTEST_SKIP() << "CUDA not enabled in this build";
+#endif
+}
+
 TEST(LomaTest, MinScore) {
   Bitmap image;
   CreateRandomRgbImage(512, 512, &image);

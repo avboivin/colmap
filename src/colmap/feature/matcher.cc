@@ -33,6 +33,7 @@
 #include "colmap/feature/loma.h"
 #include "colmap/feature/onnx_matchers.h"
 #include "colmap/feature/sift.h"
+#include "colmap/feature/resources.h"
 #include "colmap/util/misc.h"
 
 namespace colmap {
@@ -129,8 +130,17 @@ bool FeatureMatchingOptions::Check() const {
     case FeatureMatcherType::ALIKED_LIGHTGLUE:
       return THROW_CHECK_NOTNULL(aliked)->Check();
     case FeatureMatcherType::LOMA_B:
-    case FeatureMatcherType::LOMA_R:
       return THROW_CHECK_NOTNULL(loma)->Check();
+    case FeatureMatcherType::LOMA_R: {
+      if (!THROW_CHECK_NOTNULL(loma)->Check()) {
+        return false;
+      }
+      if (loma->model_path.empty() || loma->model_path == kDefaultLomaBMatcherUri) {
+        LOG(ERROR) << "LOMA_R matcher model is not hosted yet: pass --LomaMatching.model_path <path to loma_matcher_R.onnx>";
+        return false;
+      }
+      return true;
+    }
     default:
       LOG(ERROR) << "Unknown feature matcher type: " << type;
       return false;
