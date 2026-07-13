@@ -343,9 +343,17 @@ class LomaFeatureMatcher : public FeatureMatcher {
     THROW_CHECK_NOTNULL(image.keypoints);
     THROW_CHECK_NOTNULL(image.descriptors);
     THROW_CHECK_NOTNULL(image.camera);
-    THROW_CHECK(image.descriptors->type == FeatureExtractorType::LOMA_B)
-        << "LoMa matcher got unsupported feature type: "
-        << FeatureExtractorTypeToString(image.descriptors->type);
+    if (options_.type == FeatureMatcherType::LOMA_B) {
+      THROW_CHECK(image.descriptors->type == FeatureExtractorType::LOMA_B)
+          << "LoMa B matcher got unsupported feature type: "
+          << FeatureExtractorTypeToString(image.descriptors->type);
+    } else if (options_.type == FeatureMatcherType::LOMA_R) {
+      THROW_CHECK(image.descriptors->type == FeatureExtractorType::LOMA_R)
+          << "LoMa R matcher got unsupported feature type: "
+          << FeatureExtractorTypeToString(image.descriptors->type);
+    } else {
+      LOG(FATAL_THROW) << "Unknown matcher type";
+    }
     THROW_CHECK_EQ(image.descriptors->data.cols() % sizeof(float), 0);
 
     const int num_keypoints = image.descriptors->data.rows();
@@ -402,6 +410,14 @@ bool LomaMatchingOptions::Check() const {
 
 std::unique_ptr<FeatureMatcher> CreateLomaFeatureMatcher(
     const FeatureMatchingOptions& options) {
+  if (options.type == FeatureMatcherType::LOMA_R) {
+    if (options.loma->model_path.empty() ||
+        options.loma->model_path == kDefaultLomaBMatcherUri) {
+      throw std::runtime_error(
+          "LOMA_R matcher model is not hosted yet: pass "
+          "--LomaMatching.model_path <path to loma_matcher_R.onnx>");
+    }
+  }
 #ifdef COLMAP_ONNX_ENABLED
   return std::make_unique<LomaFeatureMatcher>(options);
 #else

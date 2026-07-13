@@ -34,6 +34,7 @@
 #include "colmap/scene/camera.h"
 #include "colmap/sensor/bitmap.h"
 
+#include <cstdlib>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
@@ -159,4 +160,60 @@ TEST(LomaTest, DynamicNumKeypoints) {
 }
 
 }  // namespace
+
+TEST(LomaTest, NominalR) {
+  const char* loma_r_path = std::getenv("LOMA_R_MATCHER_PATH");
+  if (loma_r_path == nullptr) {
+    GTEST_SKIP() << "LOMA_R_MATCHER_PATH environment variable not set";
+  }
+
+  Bitmap image;
+  CreateRandomRgbImage(512, 512, &image);
+
+  FeatureExtractionOptions extraction_options(FeatureExtractorType::LOMA_R);
+  extraction_options.use_gpu = false;
+  extraction_options.loma->min_score = 0.0;
+  auto extractor = CreateLomaFeatureExtractor(extraction_options);
+  auto keypoints = std::make_shared<FeatureKeypoints>();
+  auto descriptors = std::make_shared<FeatureDescriptors>();
+  ASSERT_TRUE(extractor->Extract(image, keypoints.get(), descriptors.get()));
+
+  EXPECT_GT(keypoints->size(), 0);
+  EXPECT_EQ(keypoints->size(), descriptors->data.rows());
+  EXPECT_EQ(descriptors->type, FeatureExtractorType::LOMA_R);
+
+  for (const auto& keypoint : *keypoints) {
+    EXPECT_GE(keypoint.x, 0);
+    EXPECT_GE(keypoint.y, 0);
+    EXPECT_LE(keypoint.x, image.Width());
+    EXPECT_LE(keypoint.y, image.Height());
+  }
+
+  Camera camera;
+  camera.width = image.Width();
+  camera.height = image.Height();
+
+  FeatureMatchingOptions matching_options(FeatureMatcherType::LOMA_R);
+  matching_options.use_gpu = false;
+  matching_options.loma->min_score = 0.0;
+  matching_options.loma->model_path = loma_r_path;
+  auto matcher = CreateLomaFeatureMatcher(matching_options);
+
+  FeatureMatches matches;
+  const FeatureMatcher::Image image1{1, &camera, keypoints, descriptors};
+  const FeatureMatcher::Image image2{2, &camera, keypoints, descriptors};
+  matcher->Match(image1, image2, &matches);
+
+  ASSERT_GT(matches.size(), 0);
+  int num_self_matches = 0;
+  for (const auto& match : matches) {
+    EXPECT_GE(match.point2D_idx1, 0);
+    EXPECT_LT(match.point2D_idx1, keypoints->size());
+    EXPECT_GE(match.point2D_idx2, 0);
+    EXPECT_LT(match.point2D_idx2, keypoints->size());
+    if (match.point2D_idx1 == match.point2D_idx2) ++num_self_matches;
+  }
+  EXPECT_GT(num_self_matches, 0.5 * matches.size());
+}
+
 }  // namespace colmap

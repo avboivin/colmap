@@ -75,6 +75,7 @@ inline const std::string kDefaultLomaBMatcherUri =
     "loma_matcher_B.onnx;"
     "loma_matcher_B.onnx;"
     "4117f769da5db6058f40019957b54008e3f2e5e238adbe134223653a67b1fdf5";
+inline const std::string kDefaultLomaRMatcherUri = "";
 #else
 inline const std::string kDefaultAlikedN16RotFeatureExtractorUri = "";
 inline const std::string kDefaultAlikedN32FeatureExtractorUri = "";
@@ -84,6 +85,7 @@ inline const std::string kDefaultSiftLightGlueFeatureMatcherUri = "";
 inline const std::string kDefaultLomaBDetectorUri = "";
 inline const std::string kDefaultLomaBDescriptorUri = "";
 inline const std::string kDefaultLomaBMatcherUri = "";
+inline const std::string kDefaultLomaRMatcherUri = "";
 #endif
 
 }  // namespace colmap

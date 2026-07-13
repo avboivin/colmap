@@ -45,7 +45,8 @@ MAKE_ENUM_CLASS_OVERLOAD_STREAM(FeatureExtractorType,
                                 SIFT,
                                 ALIKED_N16ROT,
                                 ALIKED_N32,
-                                LOMA_B);
+                                LOMA_B,
+                                LOMA_R);
 MAKE_ENUM_CLASS_OVERLOAD_STREAM(FeatureMatcherType,
                                 -1,
                                 UNDEFINED,
@@ -53,7 +54,8 @@ MAKE_ENUM_CLASS_OVERLOAD_STREAM(FeatureMatcherType,
                                 SIFT_LIGHTGLUE,
                                 ALIKED_BRUTEFORCE,
                                 ALIKED_LIGHTGLUE,
-                                LOMA_B);
+                                LOMA_B,
+                                LOMA_R);
 
 struct FeatureKeypoint {
   FeatureKeypoint();

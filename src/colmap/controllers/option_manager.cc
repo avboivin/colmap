@@ -42,6 +42,7 @@
 #include "colmap/estimators/gravity_refinement.h"
 #include "colmap/estimators/two_view_geometry.h"
 #include "colmap/feature/aliked.h"
+#include "colmap/feature/loma.h"
 #include "colmap/feature/sift.h"
 #if defined(COLMAP_MVS_ENABLED)
 #include "colmap/mvs/advancing_front_meshing.h"
@@ -286,6 +287,15 @@ void OptionManager::AddFeatureExtractionOptions() {
                    &feature_extraction->aliked->n16rot_model_path);
   AddDefaultOption("AlikedExtraction.n32_model_path",
                    &feature_extraction->aliked->n32_model_path);
+
+  AddDefaultOption("LomaExtraction.max_num_features",
+                   &feature_extraction->loma->max_num_features);
+  AddDefaultOption("LomaExtraction.min_score",
+                   &feature_extraction->loma->min_score);
+  AddDefaultOption("LomaExtraction.detector_model_path",
+                   &feature_extraction->loma->detector_model_path);
+  AddDefaultOption("LomaExtraction.descriptor_model_path",
+                   &feature_extraction->loma->descriptor_model_path);
 }
 
 void OptionManager::AddFeatureMatchingOptions() {
@@ -338,6 +348,11 @@ void OptionManager::AddFeatureMatchingOptions() {
                    &feature_matching->aliked->lightglue.min_score);
   AddDefaultOption("AlikedMatching.lightglue_model_path",
                    &feature_matching->aliked->lightglue.model_path);
+
+  AddDefaultOption("LomaMatching.min_score",
+                   &feature_matching->loma->min_score);
+  AddDefaultOption("LomaMatching.model_path",
+                   &feature_matching->loma->model_path);
 }
 
 void OptionManager::AddTwoViewGeometryOptions() {
